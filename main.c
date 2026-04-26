@@ -1,6 +1,10 @@
+#include <SDL3/SDL_init.h>
+#include <SDL3/SDL_render.h>
+#include <SDL3/SDL_video.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <SDL3/SDL.h>
 
 #define MEM_SIZE 4096
 #define FONT_START 0x50	// 80
@@ -39,10 +43,34 @@ int main(int argc, char** argv)
 		exit(0);
 	}
 
+	SDL_Window *window = NULL;
+	SDL_Renderer *renderer = NULL;
+
+	SDL_SetAppMetadata("CHIP-8", "0.0.0", "com.llebj.chip-8");
+	SDL_Init(SDL_INIT_VIDEO);
+	SDL_CreateWindowAndRenderer("CHIP-8", 640, 320, SDL_WINDOW_MAXIMIZED, &window, &renderer);
+	SDL_SetRenderLogicalPresentation(renderer, 64, 32, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+
+	SDL_SetRenderDrawColorFloat(renderer, 255, 0, 0, SDL_ALPHA_OPAQUE_FLOAT);
+	/* clear the window to the draw color. */
+	SDL_RenderClear(renderer);
+	/* put the newly-cleared rendering on the screen. */
+	SDL_RenderPresent(renderer);
+
+	while (1) {
+		continue;
+	}
+
 	// Copy the font data into memory starting at `mem + FONT_START`.
+	/*
 	memcpy(mem + FONT_START, font, sizeof(font));
 	rom_size = load_rom(argv[1], mem + ROM_START);
 	dump_rom(mem + ROM_START, rom_size);
+	*/
+
+	SDL_DestroyRenderer(renderer);
+	SDL_DestroyWindow(window);
+	SDL_Quit();
 }
 
 void dump_rom(unsigned char* rom, int len)
