@@ -18,7 +18,7 @@
 #define NANOSEC 1000000000L
 
 unsigned char memory[MEM_SIZE];
-unsigned long pc = 0;
+unsigned char *pc = NULL;
 unsigned int i = 0;
 unsigned int stack[16];
 unsigned char delay = 0;
@@ -56,6 +56,21 @@ int main(int argc, char** argv)
 		exit(0);
 	}
 
+	// Copy the font data into memory starting at `memory + FONT_START`.
+	memcpy(memory + FONT_START, font, sizeof(font));
+	rom_size = load_rom(argv[1], memory + ROM_START);
+	/*
+	dump_rom(mem + ROM_START, rom_size);
+	*/
+
+	// Move the program counter to the start of the ROM
+	pc = memory + ROM_START;
+
+	// Storage variables used when custructing the current instruction during
+	// the fetch stage of the loop.
+	unsigned int current = 0,
+		     temp = 0;
+
 	const double period = 1.0 / 700;	// The target seconds per instruction
 	double diff = 0,
 	       remaining = 0;
@@ -63,14 +78,21 @@ int main(int argc, char** argv)
 			t1,
 			wait;
 
-	struct timespec delay;
-	delay.tv_sec = 0;
-	delay.tv_nsec = 500000L;		// 500 micro-seconds
-
 	while (1) {
 		clock_gettime(CLOCK_MONOTONIC, &t0);
-		// Simulate work
-		nanosleep(&delay, NULL);
+
+		// fetch
+		current = *pc++;
+		temp = *pc++;
+		// We shift `temp` so that the bits can be written into the higher
+		// order positions with `&`, giving us a 2-byte instruction.
+		temp <<= 8;
+		current = current | temp;
+
+		// decode
+
+		// execute
+
 		clock_gettime(CLOCK_MONOTONIC, &t1);
 
 		// Throttle execution time to `period`
@@ -84,12 +106,6 @@ int main(int argc, char** argv)
 		}
 	}
 
-	// Copy the font data into memory starting at `mem + FONT_START`.
-	/*
-	memcpy(mem + FONT_START, font, sizeof(font));
-	rom_size = load_rom(argv[1], mem + ROM_START);
-	dump_rom(mem + ROM_START, rom_size);
-	*/
 }
 
 void dump_rom(unsigned char* rom, int len)
