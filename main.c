@@ -17,13 +17,13 @@
 
 #define NANOSEC 1000000000L
 
-unsigned char mem[MEM_SIZE];
+unsigned char memory[MEM_SIZE];
 unsigned long pc = 0;
-unsigned int i_reg = 0;
+unsigned int i = 0;
 unsigned int stack[16];
-unsigned char d_timer = 0;
-unsigned char s_timer = 0;
-unsigned char v_reg[16];
+unsigned char delay = 0;
+unsigned char sound = 0;
+unsigned char v[16];
 
 unsigned char const font[] = {
 	0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
