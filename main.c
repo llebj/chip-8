@@ -91,6 +91,26 @@ int main(int argc, char** argv)
 
 		// decode
 		// execute
+		switch ((opcode & 0xF000) >> 12) {
+		case 0x0000:
+			switch (opcode) {
+			case 0x00E0:	// O0E0: Clear screen
+				// TODO: Implement
+				break;
+			break;
+			}
+		case 0x1000:		// 1000: Jump
+			pc = (uint8_t *)(opcode & 0x0FFF);
+		case 0x6000:		// 6XNN: Set
+			// Set VX to NN
+			v[opcode & 0x0F00] = opcode & 0x00FF;
+		case 0x7000:		// 7XNN: Add
+			// Add NN to VX
+			v[opcode & 0x0F00] += opcode & 0x00FF;
+		case 0xA000:		// ANNN: Set index
+			// Set index to NNN
+			i = opcode & 0x0FFF; 
+		}
 
 		clock_gettime(CLOCK_MONOTONIC, &t1);
 
