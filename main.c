@@ -17,11 +17,14 @@
 #define ROM_START 0x200	// 512
 #define ROM_MAX 3894
 
+#define DISPLAY_WIDTH 64
+#define DISPLAY_HEIGHT 32
+
 #define NANOSEC 1000000000L
 
 uint8_t memory[MEM_SIZE];
-uint8_t *pc = NULL;
-uint16_t i = 0;
+uint16_t pc = 0;
+uint16_t I = 0;
 uint16_t stack[16];
 uint8_t delay = 0;
 uint8_t sound = 0;
@@ -46,6 +49,8 @@ uint8_t const font[] = {
 	0xF0, 0x80, 0xF0, 0x80, 0x80  // F
 };
 
+uint8_t raster[DISPLAY_HEIGHT * DISPLAY_WIDTH];
+
 int rom_size = 0;
 
 void dump_rom(uint8_t* rom, int len);
@@ -68,7 +73,7 @@ int main(int argc, char** argv)
 	}
 
 	// Move the program counter to the start of the ROM
-	pc = memory + ROM_START;
+	pc = ROM_START;
 
 	// Storage for the current opcode read during the fetch loop.
 	uint16_t opcode = 0;
@@ -86,30 +91,73 @@ int main(int argc, char** argv)
 		// fetch
 		// CHIP-8 instructions are two bytes. Therefore we are reading the
 		// higher order byte first.
-		opcode = (*pc++ & 0xFF) << 8;
-		opcode |= (*pc++ & 0xFF);
+		opcode = (memory[pc++] & 0xFF) << 8;
+		opcode |= (memory[pc++] & 0xFF);
 
 		// decode
 		// execute
-		switch ((opcode & 0xF000) >> 12) {
+		switch (opcode & 0xF000) {
 		case 0x0000:
 			switch (opcode) {
 			case 0x00E0:	// O0E0: Clear screen
-				// TODO: Implement
+				for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
+					for (uint8_t x = 0; x < DISPLAY_WIDTH; ++x) {
+						raster[y * DISPLAY_HEIGHT + x] = 0;
+					}
+				}
 				break;
-			break;
 			}
+			break;
 		case 0x1000:		// 1000: Jump
-			pc = (uint8_t *)(opcode & 0x0FFF);
+			pc = memory[opcode & 0x0FFF];
+			break;
 		case 0x6000:		// 6XNN: Set
 			// Set VX to NN
-			v[opcode & 0x0F00] = opcode & 0x00FF;
+			v[(opcode & 0x0F00) >> 8] = opcode & 0x00FF;
+			break;
 		case 0x7000:		// 7XNN: Add
 			// Add NN to VX
-			v[opcode & 0x0F00] += opcode & 0x00FF;
+			v[(opcode & 0x0F00) >> 8] += opcode & 0x00FF;
+			break;
 		case 0xA000:		// ANNN: Set index
 			// Set index to NNN
-			i = opcode & 0x0FFF; 
+			I = opcode & 0x0FFF; 
+			break;
+		case 0xD000:		// DXYN: Display
+		{
+			// Variables used to store values from the display instruction.
+			uint8_t sx = v[(opcode & 0x0F00) >> 8] % DISPLAY_WIDTH,
+				sy = v[(opcode & 0x00F0) >> 4] % DISPLAY_HEIGHT,
+				height = opcode & 0x000F,
+				line = 0;
+			v[0xF] = 0;
+
+			// We want to write the sprite data to N lines, starting at
+			// Y. We need to ensure that we clip any lines that exceed
+			// the height of the raster.
+			for (uint8_t y = 0; y < height && sy + y < DISPLAY_HEIGHT; ++y) {
+				line = memory[I + y];
+				// We want to write the sprite data at `I + y` onto the
+				// current line, starting at X. We need to clip
+				// the data if it exceeds the width of the raster.
+				// Sprites are always 8 pixels wide.
+				for (uint8_t x = 0; x < 8 && sx + x < DISPLAY_WIDTH; ++x) {
+					// `0x80 >> x` is used to mask off the x-th bit in
+					// `line`, from most-significant to least-significant
+					// bit.
+					if ((line & (0x80 >> x)) == 0) {
+						continue;
+					}
+					if (raster[(sy + y) * DISPLAY_HEIGHT + (sx + x)] == 1) {
+						v[0xF] = 1;
+					}
+					raster[(sy + y) * DISPLAY_HEIGHT + (sx + x)] ^= 1;
+				}
+			}
+			break;
+		}
+		default:
+			break;
 		}
 
 		clock_gettime(CLOCK_MONOTONIC, &t1);
