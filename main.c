@@ -7,8 +7,12 @@
 // `clock_gettime` requires _POSIX_C_SOURCE >= 199309L
 #include <time.h>
 
+#include <SDL3/SDL_error.h>
+#include <SDL3/SDL_events.h>
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_render.h>
+#include <SDL3/SDL_surface.h>
+#include <SDL3/SDL_pixels.h>
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL.h>
 
@@ -49,7 +53,14 @@ uint8_t const font[] = {
 	0xF0, 0x80, 0xF0, 0x80, 0x80  // F
 };
 
-uint8_t raster[DISPLAY_HEIGHT * DISPLAY_WIDTH];
+uint8_t quit = 0;
+
+uint8_t frame_buf[DISPLAY_HEIGHT * DISPLAY_WIDTH];
+SDL_Window *window = NULL;
+SDL_Renderer *renderer = NULL;
+SDL_Texture *texture = NULL;
+
+void draw();
 
 int rom_size = 0;
 
@@ -72,6 +83,38 @@ int main(int argc, char** argv)
 		exit(0);
 	}
 
+	SDL_SetAppMetadata("CHIP-8", "0.0.0", "com.llebj.chip-8");
+	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
+		SDL_Log("Failed to init: %s\n", SDL_GetError());
+		exit(1);
+	}
+	if (!(window = SDL_CreateWindow("CHIP-8", DISPLAY_WIDTH * 10, DISPLAY_HEIGHT * 10, 0))) {
+		SDL_Log("Failed to crate window: %s\n", SDL_GetError());
+		exit(1);
+	}
+	if (!(renderer = SDL_CreateRenderer(window, NULL))) {
+		SDL_Log("Failed to create renderer: %s\n", SDL_GetError());
+		exit(1);
+	}
+	if (!SDL_SetRenderLogicalPresentation(
+					renderer,
+					DISPLAY_WIDTH,
+					DISPLAY_HEIGHT,
+					SDL_LOGICAL_PRESENTATION_LETTERBOX)) {
+		SDL_Log("Failed to set render logical presentation: %s\n", SDL_GetError());
+		exit(1);
+	}
+	if (!(texture = SDL_CreateTexture(renderer,
+			SDL_PIXELFORMAT_ABGR32, SDL_TEXTUREACCESS_STREAMING,
+			DISPLAY_WIDTH, DISPLAY_HEIGHT))) {
+		SDL_Log("Failed to create texture: %s\n", SDL_GetError());
+		exit(1);
+	}
+	if (!SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST)) {
+		SDL_Log("Failed to set texture scale mode: %s\n", SDL_GetError());
+		exit(1);
+	}
+
 	// Move the program counter to the start of the ROM
 	pc = ROM_START;
 
@@ -85,7 +128,24 @@ int main(int argc, char** argv)
 			t1,
 			wait;
 
-	while (1) {
+	SDL_Event e;
+
+	while (!quit) {
+		while (SDL_PollEvent(&e)) {
+			switch (e.type) {
+			case SDL_EVENT_QUIT:
+				quit = 1;
+				break;
+			case SDL_EVENT_KEY_UP:
+				if (e.key.key == SDLK_ESCAPE) {
+					quit = 1;
+				}
+				break;
+			default:
+				break;
+			}
+		}
+
 		clock_gettime(CLOCK_MONOTONIC, &t0);
 
 		// fetch
@@ -102,9 +162,10 @@ int main(int argc, char** argv)
 			case 0x00E0:	// O0E0: Clear screen
 				for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
 					for (uint8_t x = 0; x < DISPLAY_WIDTH; ++x) {
-						raster[y * DISPLAY_HEIGHT + x] = 0;
+						frame_buf[y * DISPLAY_WIDTH + x] = 0;
 					}
 				}
+				draw();
 				break;
 			}
 			break;
@@ -148,12 +209,13 @@ int main(int argc, char** argv)
 					if ((line & (0x80 >> x)) == 0) {
 						continue;
 					}
-					if (raster[(sy + y) * DISPLAY_HEIGHT + (sx + x)] == 1) {
+					if (frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] == 1) {
 						v[0xF] = 1;
 					}
-					raster[(sy + y) * DISPLAY_HEIGHT + (sx + x)] ^= 1;
+					frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] ^= 1;
 				}
 			}
+			draw();
 			break;
 		}
 		default:
@@ -172,6 +234,11 @@ int main(int argc, char** argv)
 			nanosleep(&wait, NULL);
 		}
 	}
+
+	SDL_DestroyTexture(texture);
+	SDL_DestroyRenderer(renderer);
+	SDL_DestroyWindow(window);
+	SDL_Quit();
 }
 
 void dump_rom(uint8_t* rom, int len)
@@ -209,30 +276,31 @@ int load_rom(char* path, uint8_t* buffer)
 	return len;
 }
 
-
-SDL_Window *window = NULL;
-SDL_Renderer *renderer = NULL;
-
-void sdl_init()
-{
-	SDL_SetAppMetadata("CHIP-8", "0.0.0", "com.llebj.chip-8");
-	SDL_Init(SDL_INIT_VIDEO);
-	SDL_CreateWindowAndRenderer("CHIP-8", 640, 320, SDL_WINDOW_MAXIMIZED, &window, &renderer);
-	SDL_SetRenderLogicalPresentation(renderer, 64, 32, SDL_LOGICAL_PRESENTATION_LETTERBOX);
-}
-
-void sdl_destroy()
-{
-	SDL_DestroyRenderer(renderer);
-	SDL_DestroyWindow(window);
-	SDL_Quit();
-}
-
+// This function re-draws the entire screen each time. Can this be improved
+// be only drawing the individual sprites?
 void draw()
 {
-	SDL_SetRenderDrawColorFloat(renderer, 255, 0, 0, SDL_ALPHA_OPAQUE_FLOAT);
-	/* clear the window to the draw color. */
-	SDL_RenderClear(renderer);
+	uint32_t* pixels;
+	int pitch, qpitch;
+
+	if (!SDL_LockTexture(texture, NULL, (void**)&pixels, &pitch)) {
+		SDL_Log("Failed to lock texture: %s\n", SDL_GetError());
+		exit(1);
+	}
+	// pitch refers to the size in bytes so we divide by 4 to get the number
+	// of 4-byte (32-bit) chuncks.
+	qpitch = pitch / 4;
+	for (int i = 0; i < DISPLAY_HEIGHT; i++) {
+		for (int j = 0; j < DISPLAY_WIDTH; j++) {
+			// The pitch of the texture is not guaranteed to be
+			// equal to the display width; we are mapping the frame
+			// buffer onto the pitched texture.
+			*(pixels + i * qpitch + j) = frame_buf[i * DISPLAY_WIDTH + j] ? 0xffffffff : 0xff000000;
+		}
+	}
+
+	SDL_UnlockTexture(texture);
+	SDL_RenderTexture(renderer, texture, NULL, NULL);
 	/* put the newly-cleared rendering on the screen. */
 	SDL_RenderPresent(renderer);
 }
