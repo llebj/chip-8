@@ -190,7 +190,22 @@ void execute_loop(enum DisplayOp* display_op)
 		}
 		break;
 	case 0x1000:		// 1000: Jump
-		pc = memory[opcode & 0x0FFF];
+		pc = opcode & 0x0FFF;
+		break;
+	case 0x3000:		// 3XNN: Skip conditionally
+		if (v[(opcode & 0x0F00) >> 8] == (opcode & 0x00FF)) {
+			pc += 2;
+		}
+		break;
+	case 0x4000:		// 4XNN: Skip conditionally
+		if (v[(opcode & 0x0F00) >> 8] != (opcode & 0x00FF)) {
+			pc += 2;
+		}
+		break;
+	case 0x5000:		// 5XY0: Skip conditionally
+		if (v[(opcode & 0x0F00) >> 8] == v[(opcode & 0x00F0) >> 4]) {
+			pc += 2;
+		}
 		break;
 	case 0x6000:		// 6XNN: Set
 		// Set VX to NN
@@ -199,6 +214,11 @@ void execute_loop(enum DisplayOp* display_op)
 	case 0x7000:		// 7XNN: Add
 		// Add NN to VX
 		v[(opcode & 0x0F00) >> 8] += opcode & 0x00FF;
+		break;
+	case 0x9000:		// 9XY0: Skip conditionally
+		if (v[(opcode & 0x0F00) >> 8] != v[(opcode & 0x00F0) >> 4]) {
+			pc += 2;
+		}
 		break;
 	case 0xA000:		// ANNN: Set index
 		// Set index to NNN
