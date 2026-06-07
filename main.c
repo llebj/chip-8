@@ -7,28 +7,25 @@
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_init.h>
+#include <SDL3/SDL_log.h>
 #include <SDL3/SDL_pixels.h>
 #include <SDL3/SDL_render.h>
 #include <SDL3/SDL_surface.h>
 #include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_video.h>
-#include <SDL3/SDL.h>
 
-#define MEM_SIZE 4096
-#define FONT_START 0x50	// 80
-#define ROM_START 0x200	// 512
-#define ROM_MAX 3894
+#include "chip-8.h"
 
 #define DISPLAY_WIDTH 64
 #define DISPLAY_HEIGHT 32
 
 #define NANOSEC 1000000000L
 
-typedef enum {
+enum DisplayOp {
 	NOOP,
 	DRAW,
 	CLEAR
-} DisplayOp;
+};
 
 uint8_t memory[MEM_SIZE];
 uint16_t pc = 0;
@@ -58,11 +55,9 @@ uint8_t const font[] = {
 };
 
 uint8_t quit = 0;
-void execute_loop(DisplayOp* display_op);
+void execute_loop(enum DisplayOp* display_op);
 
 int rom_size = 0;
-void dump_rom(uint8_t* rom, int len);
-int load_rom(char* path, uint8_t* buffer);
 
 uint8_t frame_buf[DISPLAY_HEIGHT * DISPLAY_WIDTH];
 SDL_Window *window = NULL;
@@ -70,6 +65,8 @@ SDL_Renderer *renderer = NULL;
 SDL_Texture *texture = NULL;
 void clear_screen();
 void draw();
+uint8_t init_display();
+void destroy_display();
 
 int main(int argc, char** argv)
 {
@@ -80,7 +77,10 @@ int main(int argc, char** argv)
 
 	// Copy the font data into memory starting at `memory + FONT_START`.
 	memcpy(memory + FONT_START, font, sizeof(font));
-	rom_size = load_rom(argv[argc - 1], memory + ROM_START);
+	if ((rom_size = load_rom(argv[argc - 1], memory + ROM_START)) == 0) {
+		printf("Failed to load ROM.");
+		exit(1);
+	}
 
 	if (strcmp(argv[1], "--dump-rom") == 0) {
 		dump_rom(memory + ROM_START, rom_size);
@@ -90,32 +90,11 @@ int main(int argc, char** argv)
 	SDL_SetAppMetadata("CHIP-8", "0.0.0", "com.llebj.chip-8");
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
 		SDL_Log("Failed to init: %s\n", SDL_GetError());
+		SDL_Quit();
 		exit(1);
 	}
-	if (!(window = SDL_CreateWindow("CHIP-8", DISPLAY_WIDTH * 10, DISPLAY_HEIGHT * 10, 0))) {
-		SDL_Log("Failed to crate window: %s\n", SDL_GetError());
-		exit(1);
-	}
-	if (!(renderer = SDL_CreateRenderer(window, NULL))) {
-		SDL_Log("Failed to create renderer: %s\n", SDL_GetError());
-		exit(1);
-	}
-	if (!SDL_SetRenderLogicalPresentation(
-					renderer,
-					DISPLAY_WIDTH,
-					DISPLAY_HEIGHT,
-					SDL_LOGICAL_PRESENTATION_LETTERBOX)) {
-		SDL_Log("Failed to set render logical presentation: %s\n", SDL_GetError());
-		exit(1);
-	}
-	if (!(texture = SDL_CreateTexture(renderer,
-			SDL_PIXELFORMAT_ABGR32, SDL_TEXTUREACCESS_STREAMING,
-			DISPLAY_WIDTH, DISPLAY_HEIGHT))) {
-		SDL_Log("Failed to create texture: %s\n", SDL_GetError());
-		exit(1);
-	}
-	if (!SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST)) {
-		SDL_Log("Failed to set texture scale mode: %s\n", SDL_GetError());
+	if (!init_display()) {
+		SDL_Quit();
 		exit(1);
 	}
 
@@ -128,7 +107,7 @@ int main(int argc, char** argv)
 	       t_delta = 0;
 
 	SDL_Event e;
-	DisplayOp display_op = NOOP;
+	enum DisplayOp display_op = NOOP;
 
 	// Move the program counter to the start of the ROM
 	pc = ROM_START;
@@ -174,45 +153,8 @@ int main(int argc, char** argv)
 		}
 	}
 
-	SDL_DestroyTexture(texture);
-	SDL_DestroyRenderer(renderer);
-	SDL_DestroyWindow(window);
+	destroy_display();
 	SDL_Quit();
-}
-
-void dump_rom(uint8_t* rom, int len)
-{
-	for (int i = 0; i < len; i++) {
-		if (i % 16 == 0) {
-			printf("%s%08x", i == 0 ? "" : "\n", i);
-		}
-		printf("%s%02x", i % 2 == 0 ? "    " : "", rom[i]);
-	}
-	printf("\n%08x\n", len);
-}
-
-int load_rom(char* path, uint8_t* buffer)
-{
-	unsigned int len = 0;
-	FILE *fp;
-
-	if ((fp = fopen(path, "r")) == NULL) {
-		fprintf(stderr, "Error: could not open %s\n", path);
-		exit(1);
-	}
-
-	int c = '\0';
-	uint8_t* ram_ptr = buffer;
-	for ( ; (c = getc(fp)) != EOF && len < ROM_MAX; ++len) {
-		*(ram_ptr++) = c;
-	}
-	if (c != EOF) {
-		fprintf(stderr, "Error: rom file must be less than %d bytes\n", ROM_MAX);
-		exit(1);
-	}
-
-	fclose(fp);
-	return len;
 }
 
 /*
@@ -221,7 +163,7 @@ int load_rom(char* path, uint8_t* buffer)
  *		      display output operations; this function mutates that
  *		      external state.
  */
-void execute_loop(DisplayOp* display_op)
+void execute_loop(enum DisplayOp* display_op)
 {
 	// Storage for the current opcode read during the fetch loop.
 	uint16_t opcode = 0;
@@ -336,4 +278,43 @@ void draw()
 	SDL_RenderTexture(renderer, texture, NULL, NULL);
 	/* put the newly-cleared rendering on the screen. */
 	SDL_RenderPresent(renderer);
+}
+
+// Initialises the display resources. Returns a bit flag indicating success.
+uint8_t init_display()
+{
+	if (!(window = SDL_CreateWindow("CHIP-8", DISPLAY_WIDTH * 10, DISPLAY_HEIGHT * 10, 0))) {
+		SDL_Log("Failed to crate window: %s\n", SDL_GetError());
+		return 0;
+	}
+	if (!(renderer = SDL_CreateRenderer(window, NULL))) {
+		SDL_Log("Failed to create renderer: %s\n", SDL_GetError());
+		return 0;
+	}
+	if (!SDL_SetRenderLogicalPresentation(
+					renderer,
+					DISPLAY_WIDTH,
+					DISPLAY_HEIGHT,
+					SDL_LOGICAL_PRESENTATION_LETTERBOX)) {
+		SDL_Log("Failed to set render logical presentation: %s\n", SDL_GetError());
+		return 0;
+	}
+	if (!(texture = SDL_CreateTexture(renderer,
+			SDL_PIXELFORMAT_ABGR32, SDL_TEXTUREACCESS_STREAMING,
+			DISPLAY_WIDTH, DISPLAY_HEIGHT))) {
+		SDL_Log("Failed to create texture: %s\n", SDL_GetError());
+		return 0;
+	}
+	if (!SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST)) {
+		SDL_Log("Failed to set texture scale mode: %s\n", SDL_GetError());
+		return 0;
+	}
+	return 1;
+}
+
+void destroy_display()
+{
+	SDL_DestroyTexture(texture);
+	SDL_DestroyRenderer(renderer);
+	SDL_DestroyWindow(window);
 }
