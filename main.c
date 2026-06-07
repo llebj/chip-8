@@ -1,18 +1,16 @@
-#define _POSIX_C_SOURCE 199309L
-
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-// `clock_gettime` requires _POSIX_C_SOURCE >= 199309L
-#include <time.h>
 
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_init.h>
+#include <SDL3/SDL_pixels.h>
 #include <SDL3/SDL_render.h>
 #include <SDL3/SDL_surface.h>
-#include <SDL3/SDL_pixels.h>
+#include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL.h>
 
@@ -25,6 +23,12 @@
 #define DISPLAY_HEIGHT 32
 
 #define NANOSEC 1000000000L
+
+typedef enum {
+	NOOP,
+	DRAW,
+	CLEAR
+} DisplayOp;
 
 uint8_t memory[MEM_SIZE];
 uint16_t pc = 0;
@@ -54,18 +58,18 @@ uint8_t const font[] = {
 };
 
 uint8_t quit = 0;
+void execute_loop(DisplayOp* display_op);
+
+int rom_size = 0;
+void dump_rom(uint8_t* rom, int len);
+int load_rom(char* path, uint8_t* buffer);
 
 uint8_t frame_buf[DISPLAY_HEIGHT * DISPLAY_WIDTH];
 SDL_Window *window = NULL;
 SDL_Renderer *renderer = NULL;
 SDL_Texture *texture = NULL;
-
+void clear_screen();
 void draw();
-
-int rom_size = 0;
-
-void dump_rom(uint8_t* rom, int len);
-int load_rom(char* path, uint8_t* buffer);
 
 int main(int argc, char** argv)
 {
@@ -115,22 +119,22 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 
-	// Move the program counter to the start of the ROM
-	pc = ROM_START;
+	const uint16_t frames_ps = 60,
+		       cycles_ps = 720;
+	const uint32_t ns_between_frames = (1.0 / frames_ps) * 1.0e9;
 
-	// Storage for the current opcode read during the fetch loop.
-	uint16_t opcode = 0;
-
-	const double period = 1.0 / 700;	// The target seconds per instruction
-	double diff = 0,
-	       remaining = 0;
-	struct timespec t0,
-			t1,
-			wait;
+	uint64_t t0 = 0,
+	       t1 = 0,
+	       t_delta = 0;
 
 	SDL_Event e;
+	DisplayOp display_op = NOOP;
 
+	// Move the program counter to the start of the ROM
+	pc = ROM_START;
 	while (!quit) {
+		t0 = SDL_GetTicksNS();
+
 		while (SDL_PollEvent(&e)) {
 			switch (e.type) {
 			case SDL_EVENT_QUIT:
@@ -146,92 +150,27 @@ int main(int argc, char** argv)
 			}
 		}
 
-		clock_gettime(CLOCK_MONOTONIC, &t0);
+		// The emulator loop runs faster than the frame rate; we can fit
+		// `cycles_ps / frames_ps` emulator cycles for each rendered frame.
+		for (int inst = 0; inst < cycles_ps / frames_ps; ++inst) {
+			execute_loop(&display_op);
+		}
 
-		// fetch
-		// CHIP-8 instructions are two bytes. Therefore we are reading the
-		// higher order byte first.
-		opcode = (memory[pc++] & 0xFF) << 8;
-		opcode |= (memory[pc++] & 0xFF);
-
-		// decode
-		// execute
-		switch (opcode & 0xF000) {
-		case 0x0000:
-			switch (opcode) {
-			case 0x00E0:	// O0E0: Clear screen
-				for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
-					for (uint8_t x = 0; x < DISPLAY_WIDTH; ++x) {
-						frame_buf[y * DISPLAY_WIDTH + x] = 0;
-					}
-				}
-				draw();
-				break;
-			}
-			break;
-		case 0x1000:		// 1000: Jump
-			pc = memory[opcode & 0x0FFF];
-			break;
-		case 0x6000:		// 6XNN: Set
-			// Set VX to NN
-			v[(opcode & 0x0F00) >> 8] = opcode & 0x00FF;
-			break;
-		case 0x7000:		// 7XNN: Add
-			// Add NN to VX
-			v[(opcode & 0x0F00) >> 8] += opcode & 0x00FF;
-			break;
-		case 0xA000:		// ANNN: Set index
-			// Set index to NNN
-			I = opcode & 0x0FFF; 
-			break;
-		case 0xD000:		// DXYN: Display
-		{
-			// Variables used to store values from the display instruction.
-			uint8_t sx = v[(opcode & 0x0F00) >> 8] % DISPLAY_WIDTH,
-				sy = v[(opcode & 0x00F0) >> 4] % DISPLAY_HEIGHT,
-				height = opcode & 0x000F,
-				line = 0;
-			v[0xF] = 0;
-
-			// We want to write the sprite data to N lines, starting at
-			// Y. We need to ensure that we clip any lines that exceed
-			// the height of the raster.
-			for (uint8_t y = 0; y < height && sy + y < DISPLAY_HEIGHT; ++y) {
-				line = memory[I + y];
-				// We want to write the sprite data at `I + y` onto the
-				// current line, starting at X. We need to clip
-				// the data if it exceeds the width of the raster.
-				// Sprites are always 8 pixels wide.
-				for (uint8_t x = 0; x < 8 && sx + x < DISPLAY_WIDTH; ++x) {
-					// `0x80 >> x` is used to mask off the x-th bit in
-					// `line`, from most-significant to least-significant
-					// bit.
-					if ((line & (0x80 >> x)) == 0) {
-						continue;
-					}
-					if (frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] == 1) {
-						v[0xF] = 1;
-					}
-					frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] ^= 1;
-				}
-			}
+		if (display_op == DRAW) {
 			draw();
-			break;
+			display_op = NOOP;
 		}
-		default:
-			break;
+		else if (display_op == CLEAR) {
+			clear_screen();
+			display_op = NOOP;
 		}
 
-		clock_gettime(CLOCK_MONOTONIC, &t1);
+		t1 = SDL_GetTicksNS();
 
-		// Throttle execution time to `period`
-		diff = (t1.tv_sec - t0.tv_sec) + 1.0e-9 * (t1.tv_nsec - t0.tv_nsec);
-		remaining = period - diff;
-		printf("time elapsed: %fs; waiting: %fs\n", diff, remaining > 0 ? remaining : 0);
-		if (remaining > 0) {
-			wait.tv_sec = (long)remaining;
-			wait.tv_nsec = (long)(remaining * NANOSEC) % NANOSEC;
-			nanosleep(&wait, NULL);
+		// Throttle execution time to `ns_between_frames`
+		t_delta = t1 - t0;
+		if (ns_between_frames > t_delta) {
+			SDL_DelayNS(ns_between_frames - t_delta);
 		}
 	}
 
@@ -276,10 +215,104 @@ int load_rom(char* path, uint8_t* buffer)
 	return len;
 }
 
+/*
+ * Executes one iteration of the fetch-decode-execute loop. Inputs:
+ *	`display_op`: A pointer to a variable of type `DisplayOp` which controls
+ *		      display output operations; this function mutates that
+ *		      external state.
+ */
+void execute_loop(DisplayOp* display_op)
+{
+	// Storage for the current opcode read during the fetch loop.
+	uint16_t opcode = 0;
+
+	// fetch
+	// CHIP-8 instructions are two bytes. Therefore we are reading the
+	// higher order byte first.
+	opcode = (memory[pc++] & 0xFF) << 8;
+	opcode |= (memory[pc++] & 0xFF);
+
+	// decode
+	// execute
+	switch (opcode & 0xF000) {
+	case 0x0000:
+		switch (opcode) {
+		case 0x00E0:	// O0E0: Clear screen
+			for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
+				for (uint8_t x = 0; x < DISPLAY_WIDTH; ++x) {
+					frame_buf[y * DISPLAY_WIDTH + x] = 0;
+				}
+			}
+			*display_op = CLEAR;
+			break;
+		}
+		break;
+	case 0x1000:		// 1000: Jump
+		pc = memory[opcode & 0x0FFF];
+		break;
+	case 0x6000:		// 6XNN: Set
+		// Set VX to NN
+		v[(opcode & 0x0F00) >> 8] = opcode & 0x00FF;
+		break;
+	case 0x7000:		// 7XNN: Add
+		// Add NN to VX
+		v[(opcode & 0x0F00) >> 8] += opcode & 0x00FF;
+		break;
+	case 0xA000:		// ANNN: Set index
+		// Set index to NNN
+		I = opcode & 0x0FFF; 
+		break;
+	case 0xD000:		// DXYN: Display
+	{
+		// Variables used to store values from the display instruction.
+		uint8_t sx = v[(opcode & 0x0F00) >> 8] % DISPLAY_WIDTH,
+			sy = v[(opcode & 0x00F0) >> 4] % DISPLAY_HEIGHT,
+			height = opcode & 0x000F,
+			line = 0;
+		v[0xF] = 0;
+
+		// We want to write the sprite data to N lines, starting at
+		// Y. We need to ensure that we clip any lines that exceed
+		// the height of the raster.
+		for (uint8_t y = 0; y < height && sy + y < DISPLAY_HEIGHT; ++y) {
+			line = memory[I + y];
+			// We want to write the sprite data at `I + y` onto the
+			// current line, starting at X. We need to clip
+			// the data if it exceeds the width of the raster.
+			// Sprites are always 8 pixels wide.
+			for (uint8_t x = 0; x < 8 && sx + x < DISPLAY_WIDTH; ++x) {
+				// `0x80 >> x` is used to mask off the x-th bit in
+				// `line`, from most-significant to least-significant
+				// bit.
+				if ((line & (0x80 >> x)) == 0) {
+					continue;
+				}
+				if (frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] == 1) {
+					v[0xF] = 1;
+				}
+				frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] ^= 1;
+			}
+		}
+		*display_op = DRAW;
+		break;
+	}
+	default:
+		break;
+	}
+}
+
+void clear_screen()
+{
+	SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xff);
+	SDL_RenderClear(renderer);
+}
+
 // This function re-draws the entire screen each time. Can this be improved
 // be only drawing the individual sprites?
 void draw()
 {
+	clear_screen();
+
 	uint32_t* pixels;
 	int pitch, qpitch;
 
