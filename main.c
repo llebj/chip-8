@@ -31,6 +31,7 @@ uint8_t memory[MEM_SIZE];
 uint16_t pc = 0;
 uint16_t I = 0;
 uint16_t stack[16];
+uint8_t stack_pointer = 0;
 uint8_t delay = 0;
 uint8_t sound = 0;
 uint8_t v[16];
@@ -187,9 +188,18 @@ void execute_loop(enum DisplayOp* display_op)
 			}
 			*display_op = CLEAR;
 			break;
+		case 0x00EE:	// OOEE: Subroutines
+			// WARN: Potential bounds bug
+			pc = stack[--stack_pointer];
+			break;
 		}
 		break;
 	case 0x1000:		// 1000: Jump
+		pc = opcode & 0x0FFF;
+		break;
+	case 0x2000:		// 2000: Subroutines
+		// WARN: Potential bounds bug
+		stack[stack_pointer++] = pc;
 		pc = opcode & 0x0FFF;
 		break;
 	case 0x3000:		// 3XNN: Skip conditionally
@@ -214,6 +224,51 @@ void execute_loop(enum DisplayOp* display_op)
 	case 0x7000:		// 7XNN: Add
 		// Add NN to VX
 		v[(opcode & 0x0F00) >> 8] += opcode & 0x00FF;
+		break;
+	case 0x8000:
+		switch (opcode & 0x000F) {
+		case 0x0000:	// 8XY0: Set
+			v[(opcode & 0x0F00) >> 8] = v[(opcode & 0x00F0) >> 4];
+			break;
+		case 0x0001:	// 8XY1: Binary OR
+			v[(opcode & 0x0F00) >> 8] |= v[(opcode & 0x00F0) >> 4];
+			break;
+		case 0x0002:	// 8XY2: Binary AND
+			v[(opcode & 0x0F00) >> 8] &= v[(opcode & 0x00F0) >> 4];
+			break;
+		case 0x0003:	// 8XY3: Binary XOR
+			v[(opcode & 0x0F00) >> 8] ^= v[(opcode & 0x00F0) >> 4];
+			break;
+		case 0x0004:	// 8XY4: Add
+			// Set the carry flag if VX + VY overflows VX
+			v[0xF] = (0xFF - v[(opcode & 0x0F00) >> 8]) < v[(opcode & 0x00F0) >> 4];
+			v[(opcode & 0x0F00) >> 8] += v[(opcode & 0x00F0) >> 4];
+			break;
+		case 0x0005:	// 8XY5: Subtract
+			// Set the carry flag to 0 if we underflow and 1 otherwise
+			v[0xF] = v[(opcode & 0x0F00) >> 8] >= v[(opcode & 0x00F0) >> 4];
+			v[(opcode & 0x0F00) >> 8] -= v[(opcode & 0x00F0) >> 4];
+			break;
+		case 0x0006:	// 8XY6: Shift
+			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
+			v[(opcode & 0x0F00) >> 8] = v[(opcode & 0x00F0) >> 4];
+			// Set the flag register to the value of the shifted-out bit.
+			v[0xF] = v[(opcode & 0x0F00) >> 8] & 1;
+			v[(opcode & 0x0F00) >> 8] >>= 1;
+			break;
+		case 0x0007:	// 8XY7: Subtract
+			// Set the carry flag to 0 if we underflow and 1 otherwise
+			v[0xF] = v[(opcode & 0x00F0) >> 4] >= v[(opcode & 0x0F00) >> 8];
+			v[(opcode & 0x0F00) >> 8] = v[(opcode & 0x00F0) >> 4] - v[(opcode & 0x0F00) >> 8];
+			break;
+		case 0x000E:	// 8XYE: Shift
+			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
+			v[(opcode & 0x0F00) >> 8] = v[(opcode & 0x00F0) >> 4];
+			// Set the flag register to the value of the shifted-out bit.
+			v[0xF] = v[(opcode & 0x0F00) >> 8] & 0x80;
+			v[(opcode & 0x0F00) >> 8] <<= 1;
+			break;
+		}
 		break;
 	case 0x9000:		// 9XY0: Skip conditionally
 		if (v[(opcode & 0x0F00) >> 8] != v[(opcode & 0x00F0) >> 4]) {
@@ -258,6 +313,44 @@ void execute_loop(enum DisplayOp* display_op)
 		*display_op = DRAW;
 		break;
 	}
+	case 0xF000:
+		switch (opcode & 0x00FF) {
+		case 0x001E:	// 0xFX1E: Add to index
+			I += v[(opcode & 0x0F00) >> 8];
+			break;
+		case 0x0033:	// 0xFX33: Binary-coded decimal conversion
+		{
+			// uint8_t max is 255 so we are always going to be storing
+			// 3 digits.
+			for (uint8_t i = 3, vx = v[(opcode & 0x0F00) >> 8]; i > 0; --i, vx /= 10) {
+				memory[I + i - 1] = vx % 10;
+			}
+			break;
+		}
+		case 0x0055:	// 0xFX55: Store memory
+		{
+			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
+			uint8_t registers = ((opcode & 0x0F00) >> 8) + 1;
+			for (uint8_t i = 0; i < registers; ++i) {
+				memory[I + i] = v[i];
+			}
+			I += registers;
+			break;
+		}
+		case 0x0065:	// 0xFX65: Load memory
+		{
+			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
+			uint8_t registers = ((opcode & 0x0F00) >> 8) + 1;
+			for (uint8_t i = 0; i < registers; ++i) {
+				v[i] = memory[I + i];
+			}
+			I += registers;
+			break;
+		}
+		default:
+			break;
+		}
+		break;
 	default:
 		break;
 	}
