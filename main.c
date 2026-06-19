@@ -1,4 +1,5 @@
 #include <inttypes.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,9 +8,12 @@
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_init.h>
+#include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_log.h>
 #include <SDL3/SDL_pixels.h>
 #include <SDL3/SDL_render.h>
+#include <SDL3/SDL_scancode.h>
+#include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_surface.h>
 #include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_video.h>
@@ -69,6 +73,15 @@ void draw();
 uint8_t init_display();
 void destroy_display();
 
+
+bool key_state[16] = {
+	false, false, false, false,
+	false, false, false, false,
+	false, false, false, false,
+	false, false, false, false
+};
+int8_t key_pressed = -1; // Most recently pressed key; -1 indicates no key pressed
+
 int main(int argc, char** argv)
 {
 	if (argc < 2) {
@@ -107,22 +120,161 @@ int main(int argc, char** argv)
 	       t1 = 0,
 	       t_delta = 0;
 
+	SDL_srand(SDL_GetTicksNS());
 	SDL_Event e;
 	enum DisplayOp display_op = NOOP;
 
 	// Move the program counter to the start of the ROM
 	pc = ROM_START;
 	while (!quit) {
+		display_op = NOOP;
+		key_pressed = -1;
+
 		t0 = SDL_GetTicksNS();
+
+		if (delay > 0) {
+			--delay;
+		}
+		if (sound > 0) {
+			--sound;
+		}
 
 		while (SDL_PollEvent(&e)) {
 			switch (e.type) {
 			case SDL_EVENT_QUIT:
 				quit = 1;
 				break;
+			// We use the event queue to determine which keys have
+			// been released since we last polled for input.
 			case SDL_EVENT_KEY_UP:
-				if (e.key.key == SDLK_ESCAPE) {
-					quit = 1;
+				switch (e.key.scancode) {
+				case SDL_SCANCODE_ESCAPE:
+					if (!e.key.down) {
+						quit = 1;
+					}
+					break;
+				// The following cases map scan codes to hex values
+				// corresponding to the CHIP-8 keyboard.
+				case SDL_SCANCODE_1:
+					key_pressed = 0x1;
+					key_state[0x1] = false;
+					break;
+				case SDL_SCANCODE_2:
+					key_pressed = 0x2;
+					key_state[0x2] = false;
+					break;
+				case SDL_SCANCODE_3:
+					key_pressed = 0x3;
+					key_state[0x3] = false;
+					break;
+				case SDL_SCANCODE_4:
+					key_pressed = 0xC;
+					key_state[0xC] = false;
+					break;
+				case SDL_SCANCODE_Q:
+					key_pressed = 0x4;
+					key_state[0x4] = false;
+					break;
+				case SDL_SCANCODE_W:
+					key_pressed = 0x5;
+					key_state[0x5] = false;
+					break;
+				case SDL_SCANCODE_E:
+					key_pressed = 0x6;
+					key_state[0x6] = false;
+					break;
+				case SDL_SCANCODE_R:
+					key_pressed = 0xD;
+					key_state[0xD] = false;
+					break;
+				case SDL_SCANCODE_A:
+					key_pressed = 0x7;
+					key_state[0x7] = false;
+					break;
+				case SDL_SCANCODE_S:
+					key_pressed = 0x8;
+					key_state[0x8] = false;
+					break;
+				case SDL_SCANCODE_D:
+					key_pressed = 0x9;
+					key_state[0x9] = false;
+					break;
+				case SDL_SCANCODE_F:
+					key_pressed = 0xE;
+					key_state[0xE] = false;
+					break;
+				case SDL_SCANCODE_Z:
+					key_pressed = 0xA;
+					key_state[0xA] = false;
+					break;
+				case SDL_SCANCODE_X:
+					key_pressed = 0x0;
+					key_state[0x0] = false;
+					break;
+				case SDL_SCANCODE_C:
+					key_pressed = 0xB;
+					key_state[0xB] = false;
+					break;
+				case SDL_SCANCODE_V:
+					key_pressed = 0xF;
+					key_state[0xF] = false;
+					break;
+				default:
+					break;
+				}
+				break;
+			case SDL_EVENT_KEY_DOWN:
+				switch (e.key.scancode) {
+				case SDL_SCANCODE_1:
+					key_state[0x1] = true;
+					break;
+				case SDL_SCANCODE_2:
+					key_state[0x2] = true;
+					break;
+				case SDL_SCANCODE_3:
+					key_state[0x3] = true;
+					break;
+				case SDL_SCANCODE_4:
+					key_state[0xC] = true;
+					break;
+				case SDL_SCANCODE_Q:
+					key_state[0x4] = true;
+					break;
+				case SDL_SCANCODE_W:
+					key_state[0x5] = true;
+					break;
+				case SDL_SCANCODE_E:
+					key_state[0x6] = true;
+					break;
+				case SDL_SCANCODE_R:
+					key_state[0xD] = true;
+					break;
+				case SDL_SCANCODE_A:
+					key_state[0x7] = true;
+					break;
+				case SDL_SCANCODE_S:
+					key_state[0x8] = true;
+					break;
+				case SDL_SCANCODE_D:
+					key_state[0x9] = true;
+					break;
+				case SDL_SCANCODE_F:
+					key_state[0xE] = true;
+					break;
+				case SDL_SCANCODE_Z:
+					key_state[0xA] = true;
+					break;
+				case SDL_SCANCODE_X:
+					key_state[0x0] = true;
+					break;
+				case SDL_SCANCODE_C:
+					key_state[0xB] = true;
+					break;
+				case SDL_SCANCODE_V:
+					key_state[0xF] = true;
+					break;
+				default:
+					break;
 				}
 				break;
 			default:
@@ -138,12 +290,11 @@ int main(int argc, char** argv)
 
 		if (display_op == DRAW) {
 			draw();
-			display_op = NOOP;
 		}
 		else if (display_op == CLEAR) {
 			clear_screen();
-			display_op = NOOP;
 		}
+
 
 		t1 = SDL_GetTicksNS();
 
@@ -232,42 +383,70 @@ void execute_loop(enum DisplayOp* display_op)
 			break;
 		case 0x0001:	// 8XY1: Binary OR
 			v[(opcode & 0x0F00) >> 8] |= v[(opcode & 0x00F0) >> 4];
+			v[0xF] = 0;
 			break;
 		case 0x0002:	// 8XY2: Binary AND
 			v[(opcode & 0x0F00) >> 8] &= v[(opcode & 0x00F0) >> 4];
+			v[0xF] = 0;
 			break;
 		case 0x0003:	// 8XY3: Binary XOR
 			v[(opcode & 0x0F00) >> 8] ^= v[(opcode & 0x00F0) >> 4];
+			v[0xF] = 0;
 			break;
 		case 0x0004:	// 8XY4: Add
+		{
 			// Set the carry flag if VX + VY overflows VX
-			v[0xF] = (0xFF - v[(opcode & 0x0F00) >> 8]) < v[(opcode & 0x00F0) >> 4];
-			v[(opcode & 0x0F00) >> 8] += v[(opcode & 0x00F0) >> 4];
+			uint8_t vx = (opcode & 0x0F00) >> 8,
+				vy = (opcode & 0x00F0) >> 4,
+				carry = (0xFF - v[vx]) < v[vy];
+			v[vx] += v[vy];
+			v[0xF] = carry;
 			break;
+		}
 		case 0x0005:	// 8XY5: Subtract
+		{
 			// Set the carry flag to 0 if we underflow and 1 otherwise
-			v[0xF] = v[(opcode & 0x0F00) >> 8] >= v[(opcode & 0x00F0) >> 4];
-			v[(opcode & 0x0F00) >> 8] -= v[(opcode & 0x00F0) >> 4];
+			uint8_t vx = (opcode & 0x0F00) >> 8,
+				vy = (opcode & 0x00F0) >> 4,
+				carry = v[vx] >= v[vy];
+			v[vx] -= v[vy];
+			v[0xF] = carry;
 			break;
+		}
 		case 0x0006:	// 8XY6: Shift
+		{
 			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
-			v[(opcode & 0x0F00) >> 8] = v[(opcode & 0x00F0) >> 4];
+			uint8_t vx = (opcode & 0x0F00) >> 8,
+				vy = (opcode & 0x00F0) >> 4,
+				carry = 0;
+			v[vx] = v[vy];
 			// Set the flag register to the value of the shifted-out bit.
-			v[0xF] = v[(opcode & 0x0F00) >> 8] & 1;
-			v[(opcode & 0x0F00) >> 8] >>= 1;
+			carry = v[vx] & 1;
+			v[vx] >>= 1;
+			v[0xF] = carry;
 			break;
+		}
 		case 0x0007:	// 8XY7: Subtract
+		{
 			// Set the carry flag to 0 if we underflow and 1 otherwise
-			v[0xF] = v[(opcode & 0x00F0) >> 4] >= v[(opcode & 0x0F00) >> 8];
-			v[(opcode & 0x0F00) >> 8] = v[(opcode & 0x00F0) >> 4] - v[(opcode & 0x0F00) >> 8];
+			uint8_t vx = (opcode & 0x0F00) >> 8,
+				vy = (opcode & 0x00F0) >> 4,
+				carry = v[vy] >= v[vx];
+			v[vx] = v[vy] - v[vx];
+			v[0xF] = carry;
 			break;
+		}
 		case 0x000E:	// 8XYE: Shift
+		{
 			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
-			v[(opcode & 0x0F00) >> 8] = v[(opcode & 0x00F0) >> 4];
+			uint8_t vx = (opcode & 0x0F00) >> 8,
+				vy = (opcode & 0x00F0) >> 4;
 			// Set the flag register to the value of the shifted-out bit.
-			v[0xF] = v[(opcode & 0x0F00) >> 8] & 0x80;
-			v[(opcode & 0x0F00) >> 8] <<= 1;
+			uint8_t carry = (v[vy] & 0x80) >> 7;
+			v[vx] = v[vy] << 1;
+			v[0xF] = carry;
 			break;
+		}
 		}
 		break;
 	case 0x9000:		// 9XY0: Skip conditionally
@@ -278,6 +457,13 @@ void execute_loop(enum DisplayOp* display_op)
 	case 0xA000:		// ANNN: Set index
 		// Set index to NNN
 		I = opcode & 0x0FFF; 
+		break;
+	case 0xB000:		// BNNN: Jump with offset
+		// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
+		pc = (opcode & 0x0FFF) + v[0];
+		break;
+	case 0xC000:		// CXNN: Random
+		v[(opcode & 0x0F00) >> 8] = SDL_rand(UINT16_MAX) & (opcode & 0x00FF);
 		break;
 	case 0xD000:		// DXYN: Display
 	{
@@ -313,10 +499,49 @@ void execute_loop(enum DisplayOp* display_op)
 		*display_op = DRAW;
 		break;
 	}
+	case 0xE000:
+		switch (opcode & 0x0FF) {
+		case 0x009E:	// 0xE09E: Skip if key
+			if (key_state[v[(opcode & 0x0F00) >> 8]]) {
+				pc += 2;
+			}
+			break;
+		case 0x00A1:	// 0xE0A1: Skip if key
+			if (!key_state[v[(opcode & 0x0F00) >> 8]]) {
+				pc += 2;
+			}
+			break;
+		default:
+			break;
+		}
 	case 0xF000:
 		switch (opcode & 0x00FF) {
+		case 0x0007:	// 0xFX07: Store delay
+			v[(opcode & 0x0F00) >> 8] = delay;
+			break;
+		case 0x000A:	// 0xFX0A: Get key
+			if (key_pressed == -1) {
+				// Halt execution
+				pc -= 2;
+			}
+			else {
+				v[(opcode & 0x0F00) >> 8] = key_pressed;
+			}
+			break;
+		case 0x0015:	// 0xFX15: Read delay
+			delay = v[(opcode & 0x0F00) >> 8];
+			break;
+		case 0x0018:	// 0xFX18: Store sound
+			sound = v[(opcode & 0x0F00) >> 8];
+			break;
 		case 0x001E:	// 0xFX1E: Add to index
 			I += v[(opcode & 0x0F00) >> 8];
+			break;
+		case 0x0029:	// 0xFX29: Font character
+			// The bit pattern `0x0300` masks off the first nibble
+			// of X.
+			// Font characters are 5 bytes long.
+			I = FONT_START + 5 * ((opcode & 0x0300) >> 8);
 			break;
 		case 0x0033:	// 0xFX33: Binary-coded decimal conversion
 		{
@@ -402,6 +627,10 @@ uint8_t init_display()
 	}
 	if (!(renderer = SDL_CreateRenderer(window, NULL))) {
 		SDL_Log("Failed to create renderer: %s\n", SDL_GetError());
+		return 0;
+	}
+	if (!SDL_SetRenderVSync(renderer, 1)) {
+		SDL_Log("Failed to configure render vsync: %s\n", SDL_GetError());
 		return 0;
 	}
 	if (!SDL_SetRenderLogicalPresentation(
