@@ -2,6 +2,9 @@
 #define CHIP8
 
 #include <inttypes.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #define MEM_SIZE	4096
 #define FONT_START	0x50	// 80
@@ -10,5 +13,33 @@
 
 void dump_rom(uint8_t* rom, int len);
 int load_rom(char* path, uint8_t* buffer);
+
+// ---------
+// Display -
+// ---------
+
+#define DISPLAY_WIDTH 64
+#define DISPLAY_HEIGHT 32
+
+enum DisplayOp {
+	NOOP,
+	DRAW,
+	CLEAR
+};
+
+void clear_screen();
+void draw(uint8_t frame_buf[], size_t len);
+uint8_t init_display();
+void destroy_display();
+
+// -------
+// Input -
+// -------
+struct input_state {
+	bool kb_state[16];
+	int8_t last_key;
+};
+
+bool read_input(struct input_state *state);
 
 #endif
