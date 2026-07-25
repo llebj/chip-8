@@ -33,6 +33,13 @@ uint8_t init_display();
 void destroy_display();
 
 // -------
+// Audio -
+// -------
+
+uint8_t init_audio();
+void destroy_audio();
+
+// -------
 // Input -
 // -------
 struct input_state {
