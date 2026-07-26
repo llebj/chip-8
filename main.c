@@ -77,7 +77,7 @@ int main(int argc, char** argv)
 	}
 
 	SDL_SetAppMetadata("CHIP-8", "0.0.0", "com.llebj.chip-8");
-	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
+	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO)) {
 		SDL_Log("Failed to init: %s\n", SDL_GetError());
 		SDL_Quit();
 		exit(1);
@@ -86,10 +86,13 @@ int main(int argc, char** argv)
 		SDL_Quit();
 		exit(1);
 	}
+	if (!init_audio()) {
+		SDL_Quit();
+		exit(1);
+	}
 
-	const uint16_t frames_ps = 60,
-		       cycles_ps = 720;
-	const uint32_t ns_between_frames = (1.0 / frames_ps) * 1.0e9;
+	const uint16_t cycles_ps = 720;
+	const uint32_t ns_between_frames = (1.0 / TARGET_FPS) * 1.0e9;
 
 	uint64_t t0 = 0,
 	       t1 = 0,
@@ -121,17 +124,21 @@ int main(int argc, char** argv)
 
 		// The emulator loop runs faster than the frame rate; we can fit
 		// `cycles_ps / frames_ps` emulator cycles for each rendered frame.
-		for (int inst = 0; inst < cycles_ps / frames_ps; ++inst) {
+		for (int inst = 0; inst < cycles_ps / TARGET_FPS; ++inst) {
 			execute_loop(&display_op, &input_state);
 		}
 
+		generate_samples(sound <= 0);
 		if (display_op == DRAW) {
 			draw(frame_buf, FRAME_BUF_LEN);
 		}
 		else if (display_op == CLEAR) {
 			clear_screen();
-		}
+		};
 
+		// This method of timing is inaccurate and will lead to drift
+		// against the target FPS.
+		// TODO: Implement a more accurate delay mechanism.
 		t1 = SDL_GetTicksNS();
 		// Throttle execution time to `ns_between_frames`
 		t_delta = t1 - t0;
@@ -152,6 +159,8 @@ int main(int argc, char** argv)
  */
 void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 {
+	// TODO: Implement SUPER-CHIP.
+
 	// Storage for the current opcode read during the fetch loop.
 	uint16_t opcode = 0;
 

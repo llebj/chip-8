@@ -3,7 +3,7 @@ CC=clang
 CFLAGS=-O0 -g $(shell pkg-config --cflags sdl3)
 LDLIBS=$(shell pkg-config --libs sdl3)
 
-OBJS=display.o file.o input.o main.o
+OBJS=audio.o display.o file.o input.o main.o
 TARGET=main.out
 
 # Marking targets as phony tells make that they don't output a file and that they

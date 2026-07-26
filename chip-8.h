@@ -11,6 +11,8 @@
 #define ROM_START	0x200	// 512
 #define ROM_MAX		(MEM_SIZE - ROM_START)
 
+#define TARGET_FPS	60
+
 void dump_rom(uint8_t* rom, int len);
 int load_rom(char* path, uint8_t* buffer);
 
@@ -36,8 +38,12 @@ void destroy_display();
 // Audio -
 // -------
 
+#define SAMPLE_RATE 15360
+#define SAMPLES_BUF_SIZE (SAMPLE_RATE / TARGET_FPS)
+
 uint8_t init_audio();
 void destroy_audio();
+void generate_samples(bool silence);
 
 // -------
 // Input -
