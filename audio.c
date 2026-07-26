@@ -6,6 +6,13 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#define SAMPLE_RATE 15360
+#define SAMPLES_PER_FRAME (SAMPLE_RATE / TARGET_FPS)
+// Target value is greater than the samples per frame as the timing per frame
+// is not exect, so we over-generate to provide a smooth sound.
+#define TARGET_QUEUED_SAMPLES (2 * SAMPLES_PER_FRAME)
+#define SAMPLES_BUF_SIZE TARGET_QUEUED_SAMPLES
+
 SDL_AudioStream *stream = NULL;
 SDL_AudioSpec spec = {
 	.channels = 1,
@@ -30,16 +37,16 @@ void destroy_audio()
 	SDL_DestroyAudioStream(stream);
 }
 
-void generate_samples(bool silence)
+void generate_samples()
 {
-	if (silence) {
+	int queued = SDL_GetAudioStreamQueued(stream);
+	if (queued < 0) {
 		return;
 	}
 
-	// We may be generating samples unneccessarily.
-	// TODO: Check in the audio stream queue to determine how many samples
-	// to generate.
-	for (int i = 0; i < SAMPLES_BUF_SIZE; i++) {
+	// sizeof returns uint so we cast to int to prevent arithmetic conversion.
+	int needed = TARGET_QUEUED_SAMPLES - (queued / (int)sizeof(float));
+	for (int i = 0; i < needed; ++i, ++current_sine_sample) {
 		int tone_freq = 440;
 		// We use a shared `current_sine_sample` so that the phase is
 		// consistent from one frame to the next. If we simply used `i`,
@@ -47,10 +54,9 @@ void generate_samples(bool silence)
 		// each time this function is called.
 		float phase = (float) current_sine_sample * tone_freq / SAMPLE_RATE;
 		samples[i] = 0.5f * SDL_sinf(phase * 2 * SDL_PI_F);
-		++current_sine_sample;
 	}
 	// Wrap around to avoid floating point inaccuracies.
 	current_sine_sample %= SAMPLE_RATE;
 
-	SDL_PutAudioStreamData(stream, samples, sizeof (samples));
+	SDL_PutAudioStreamData(stream, samples, needed * sizeof(float));
 }

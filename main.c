@@ -118,6 +118,7 @@ int main(int argc, char** argv)
 		}
 		if (sound > 0) {
 			--sound;
+			generate_samples();
 		}
 
 		quit = read_input(&input_state);
@@ -128,7 +129,6 @@ int main(int argc, char** argv)
 			execute_loop(&display_op, &input_state);
 		}
 
-		generate_samples(sound <= 0);
 		if (display_op == DRAW) {
 			draw(frame_buf, FRAME_BUF_LEN);
 		}
@@ -160,7 +160,7 @@ int main(int argc, char** argv)
 void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 {
 	// TODO: Implement SUPER-CHIP.
-
+	
 	// Storage for the current opcode read during the fetch loop.
 	uint16_t opcode = 0;
 

@@ -38,12 +38,9 @@ void destroy_display();
 // Audio -
 // -------
 
-#define SAMPLE_RATE 15360
-#define SAMPLES_BUF_SIZE (SAMPLE_RATE / TARGET_FPS)
-
 uint8_t init_audio();
 void destroy_audio();
-void generate_samples(bool silence);
+void generate_samples();
 
 // -------
 // Input -
