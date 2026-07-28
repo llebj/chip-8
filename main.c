@@ -63,7 +63,7 @@ uint8_t const font[] = {
 	0xF0, 0x80, 0xF0, 0x80, 0x80  // F
 };
 
-void execute_loop(enum DisplayOp* display_op, struct input_state* input_state);
+void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, enum Mode mode);
 bool parse_opts(int argc, char** argv, struct opts* opts);
 void show_help(char* file_name);
 
@@ -94,7 +94,7 @@ int main(int argc, char** argv)
 
 	// Copy the font data into memory starting at `memory + FONT_START`.
 	memcpy(memory + FONT_START, font, sizeof(font));
-	if ((rom_size = load_rom(argv[argc - 1], memory + ROM_START)) == 0) {
+	if ((rom_size = load_rom(opts.file_name, memory + ROM_START)) == 0) {
 		printf("Failed to load ROM.\n");
 		exit(1);
 	}
@@ -154,7 +154,7 @@ int main(int argc, char** argv)
 		// The emulator loop runs faster than the frame rate; we can fit
 		// `cycles_ps / frames_ps` emulator cycles for each rendered frame.
 		for (int inst = 0; inst < cycles_ps / TARGET_FPS; ++inst) {
-			execute_loop(&display_op, &input_state);
+			execute_loop(&display_op, &input_state, opts.mode);
 		}
 
 		if (display_op == DRAW) {
@@ -238,7 +238,7 @@ bool parse_opts(int argc, char** argv, struct opts* opts)
  *		      display output operations; this function mutates that
  *		      external state.
  */
-void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
+void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, enum Mode mode)
 {
 	// TODO: Implement SUPER-CHIP.
 	
@@ -340,11 +340,12 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 		}
 		case 0x0006:	// 8XY6: Shift
 		{
-			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
 			uint8_t vx = (opcode & 0x0F00) >> 8,
 				vy = (opcode & 0x00F0) >> 4,
 				carry = 0;
-			v[vx] = v[vy];
+			if (mode == Chip8) {
+				v[vx] = v[vy];
+			}
 			// Set the flag register to the value of the shifted-out bit.
 			carry = v[vx] & 1;
 			v[vx] >>= 1;
@@ -363,12 +364,18 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 		}
 		case 0x000E:	// 8XYE: Shift
 		{
-			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
 			uint8_t vx = (opcode & 0x0F00) >> 8,
-				vy = (opcode & 0x00F0) >> 4;
+				vy = (opcode & 0x00F0) >> 4,
+				carry = 0;
 			// Set the flag register to the value of the shifted-out bit.
-			uint8_t carry = (v[vy] & 0x80) >> 7;
-			v[vx] = v[vy] << 1;
+			if (mode == Chip8) {
+				carry = (v[vy] & 0x80) >> 7;
+				v[vx] = v[vy] << 1;
+			}
+			else {
+				carry = (v[vx] & 0x80) >> 7;
+				v[vx] <<= 1;
+			}
 			v[0xF] = carry;
 			break;
 		}
