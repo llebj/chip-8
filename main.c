@@ -23,6 +23,18 @@
 #define NANOSEC 1000000000L
 #define FRAME_BUF_LEN (DISPLAY_HEIGHT * DISPLAY_WIDTH)
 
+enum Mode {
+	Chip8,
+	SuperChip
+};
+
+struct opts {
+	bool show_help;
+	bool dump_rom;
+	enum Mode mode;
+	char* file_name;
+};
+
 uint8_t memory[MEM_SIZE];
 uint16_t pc = 0;
 uint16_t I = 0;
@@ -52,6 +64,8 @@ uint8_t const font[] = {
 };
 
 void execute_loop(enum DisplayOp* display_op, struct input_state* input_state);
+bool parse_opts(int argc, char** argv, struct opts* opts);
+void show_help(char* file_name);
 
 int rom_size = 0;
 
@@ -60,18 +74,32 @@ uint8_t frame_buf[FRAME_BUF_LEN];
 int main(int argc, char** argv)
 {
 	if (argc < 2) {
-		printf("Usage:\n\t%s { rom_file_path }\n\t%s --dump-rom { rom_file_path }\n", argv[0], argv[0]);
+		show_help(argv[0]);
+		exit(0);
+	}
+	struct opts opts;
+	opts.show_help = false;
+	opts.mode = Chip8;
+	opts.dump_rom = false;
+	if (!parse_opts(argc, argv, &opts)) {
+		printf("Failed to parse program options.\n");
+		show_help(argv[0]);
+		exit(1);
+	}
+
+	if (opts.show_help) {
+		show_help(argv[0]);
 		exit(0);
 	}
 
 	// Copy the font data into memory starting at `memory + FONT_START`.
 	memcpy(memory + FONT_START, font, sizeof(font));
 	if ((rom_size = load_rom(argv[argc - 1], memory + ROM_START)) == 0) {
-		printf("Failed to load ROM.");
+		printf("Failed to load ROM.\n");
 		exit(1);
 	}
 
-	if (strcmp(argv[1], "--dump-rom") == 0) {
+	if (opts.dump_rom) {
 		dump_rom(memory + ROM_START, rom_size);
 		exit(0);
 	}
@@ -148,7 +176,60 @@ int main(int argc, char** argv)
 	}
 
 	destroy_display();
+	destroy_audio();
 	SDL_Quit();
+}
+
+void show_help(char* file_name)
+{
+	printf("Usage:\n"
+		"\t%s [ --mode { ch8 | sch } ] <rom_file_path>\n"
+		"\t%s --dump-rom <rom_file_path>\n", file_name, file_name);
+}
+
+bool parse_opts(int argc, char** argv, struct opts* opts)
+{
+	bool result = true;
+	if (opts == NULL) {
+		return false;
+	}
+
+	for (int i = 1; i < argc; ++i) {
+		if (strcmp(argv[i], "--help") == 0) {
+			opts->show_help = true;
+		}
+		else if (strcmp(argv[i], "--dump-rom") == 0) {
+			opts->dump_rom = true;
+		}
+		else if (strcmp(argv[i], "--mode") == 0) {
+			if (i + 1 >= argc) {
+				// The `--mode` flag must be followed by an argument.
+				result = false;
+				continue;
+			}
+			char* mode = argv[++i];
+			if (strcmp(mode, "ch8") == 0) {
+				opts->mode = Chip8;
+			}
+			else if (strcmp(mode, "sch") == 0) {
+				opts->mode = SuperChip;
+			}
+			else {
+				// We have an un-defined mode string.
+				result = false;
+			}
+		}
+		else if (i + 1 == argc) {
+			// The ROM file name must be the final argument.
+			opts->file_name = argv[i];
+		}
+		else {
+			// We have encountered an unknown argument.
+			result = false;
+		}
+	}
+
+	return result;
 }
 
 /*
