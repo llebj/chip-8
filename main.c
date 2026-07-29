@@ -308,15 +308,21 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 			break;
 		case 0x0001:	// 8XY1: Binary OR
 			v[(opcode & 0x0F00) >> 8] |= v[(opcode & 0x00F0) >> 4];
-			v[0xF] = 0;
+			if (mode == Chip8) {
+				v[0xF] = 0;
+			}
 			break;
 		case 0x0002:	// 8XY2: Binary AND
 			v[(opcode & 0x0F00) >> 8] &= v[(opcode & 0x00F0) >> 4];
-			v[0xF] = 0;
+			if (mode == Chip8) {
+				v[0xF] = 0;
+			}
 			break;
 		case 0x0003:	// 8XY3: Binary XOR
 			v[(opcode & 0x0F00) >> 8] ^= v[(opcode & 0x00F0) >> 4];
-			v[0xF] = 0;
+			if (mode == Chip8) {
+				v[0xF] = 0;
+			}
 			break;
 		case 0x0004:	// 8XY4: Add
 		{
@@ -391,8 +397,7 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 		I = opcode & 0x0FFF; 
 		break;
 	case 0xB000:		// BNNN: Jump with offset
-		// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
-		pc = (opcode & 0x0FFF) + v[0];
+		pc = (opcode & 0x0FFF) + v[mode == Chip8 ? 0 : (opcode & 0x0F00) >> 8];
 		break;
 	case 0xC000:		// CXNN: Random
 		v[(opcode & 0x0F00) >> 8] = SDL_rand(UINT16_MAX) & (opcode & 0x00FF);
@@ -486,22 +491,24 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 		}
 		case 0x0055:	// 0xFX55: Store memory
 		{
-			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
 			uint8_t registers = ((opcode & 0x0F00) >> 8) + 1;
 			for (uint8_t i = 0; i < registers; ++i) {
 				memory[I + i] = v[i];
 			}
-			I += registers;
+			if (mode == Chip8) {
+				I += registers;
+			}
 			break;
 		}
 		case 0x0065:	// 0xFX65: Load memory
 		{
-			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
 			uint8_t registers = ((opcode & 0x0F00) >> 8) + 1;
 			for (uint8_t i = 0; i < registers; ++i) {
 				v[i] = memory[I + i];
 			}
-			I += registers;
+			if (mode == Chip8) {
+				I += registers;
+			}
 			break;
 		}
 		default:
