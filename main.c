@@ -256,7 +256,10 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 	switch (opcode & 0xF000) {
 	case 0x0000:
 		switch (opcode) {
-		case 0x00E0:	// O0E0: Clear screen
+		case 0x00C0:	// 00CN: Scroll down (SuperChip)
+			// TODO: Implement.
+			break;
+		case 0x00E0:	// 00E0: Clear screen
 			for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
 				for (uint8_t x = 0; x < DISPLAY_WIDTH; ++x) {
 					frame_buf[y * DISPLAY_WIDTH + x] = 0;
@@ -264,11 +267,26 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 			}
 			*display_op = CLEAR;
 			break;
-		case 0x00EE:	// OOEE: Subroutines
+		case 0x00EE:	// 00EE: Subroutines
 			// WARN: Potential bounds bug
 			pc = stack[--stack_pointer];
 			break;
 		}
+		case 0x00FB:	// 00FB: Scroll right (SuperChip)
+			// TODO: Implement.
+			break;
+		case 0x00FC:	// 00FC: Scroll left (SuperChip)
+			// TODO: Implement.
+			break;
+		case 0x00FD:	// 00FD: Exit (SuperChip)
+			// TODO: Implement.
+			break;
+		case 0x00FE:	// 00FE: Lores (SuperChip)
+			// TODO: Implement.
+			break;
+		case 0x00FF:	// 00FF: Hires (SuperChip)
+			// TODO: Implement.
+			break;
 		break;
 	case 0x1000:		// 1000: Jump
 		pc = opcode & 0x0FFF;
@@ -402,48 +420,58 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 	case 0xC000:		// CXNN: Random
 		v[(opcode & 0x0F00) >> 8] = SDL_rand(UINT16_MAX) & (opcode & 0x00FF);
 		break;
-	case 0xD000:		// DXYN: Display
+	case 0xD000:
 	{
-		// Variables used to store values from the display instruction.
-		uint8_t sx = v[(opcode & 0x0F00) >> 8] % DISPLAY_WIDTH,
-			sy = v[(opcode & 0x00F0) >> 4] % DISPLAY_HEIGHT,
-			height = opcode & 0x000F,
-			line = 0;
-		v[0xF] = 0;
-
-		// We want to write the sprite data to N lines, starting at
-		// Y. We need to ensure that we clip any lines that exceed
-		// the height of the raster.
-		for (uint8_t y = 0; y < height && sy + y < DISPLAY_HEIGHT; ++y) {
-			line = memory[I + y];
-			// We want to write the sprite data at `I + y` onto the
-			// current line, starting at X. We need to clip
-			// the data if it exceeds the width of the raster.
-			// Sprites are always 8 pixels wide.
-			for (uint8_t x = 0; x < 8 && sx + x < DISPLAY_WIDTH; ++x) {
-				// `0x80 >> x` is used to mask off the x-th bit in
-				// `line`, from most-significant to least-significant
-				// bit.
-				if ((line & (0x80 >> x)) == 0) {
-					continue;
-				}
-				if (frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] == 1) {
-					v[0xF] = 1;
-				}
-				frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] ^= 1;
+		switch (opcode & 0x000F) {
+		case 0x0000:	// DXY0: Draw 16x16 (SuperChip)
+			if (mode == SuperChip) {
+				// TODO: Implement.
+				break;
 			}
+		default:	// DXYN: Draw
+		{
+			// Variables used to store values from the display instruction.
+			uint8_t sx = v[(opcode & 0x0F00) >> 8] % DISPLAY_WIDTH,
+				sy = v[(opcode & 0x00F0) >> 4] % DISPLAY_HEIGHT,
+				height = opcode & 0x000F,
+				line = 0;
+			v[0xF] = 0;
+
+			// We want to write the sprite data to N lines, starting at
+			// Y. We need to ensure that we clip any lines that exceed
+			// the height of the raster.
+			for (uint8_t y = 0; y < height && sy + y < DISPLAY_HEIGHT; ++y) {
+				line = memory[I + y];
+				// We want to write the sprite data at `I + y` onto the
+				// current line, starting at X. We need to clip
+				// the data if it exceeds the width of the raster.
+				// Sprites are always 8 pixels wide.
+				for (uint8_t x = 0; x < 8 && sx + x < DISPLAY_WIDTH; ++x) {
+					// `0x80 >> x` is used to mask off the x-th bit in
+					// `line`, from most-significant to least-significant
+					// bit.
+					if ((line & (0x80 >> x)) == 0) {
+						continue;
+					}
+					if (frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] == 1) {
+						v[0xF] = 1;
+					}
+					frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] ^= 1;
+				}
+			}
+			*display_op = DRAW;
+			break;
 		}
-		*display_op = DRAW;
-		break;
+		}
 	}
 	case 0xE000:
 		switch (opcode & 0x0FF) {
-		case 0x009E:	// 0xE09E: Skip if key
+		case 0x009E:	// E09E: Skip if key
 			if (input_state->kb_state[v[(opcode & 0x0F00) >> 8]]) {
 				pc += 2;
 			}
 			break;
-		case 0x00A1:	// 0xE0A1: Skip if key
+		case 0x00A1:	// E0A1: Skip if key
 			if (!input_state->kb_state[v[(opcode & 0x0F00) >> 8]]) {
 				pc += 2;
 			}
@@ -453,10 +481,10 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 		}
 	case 0xF000:
 		switch (opcode & 0x00FF) {
-		case 0x0007:	// 0xFX07: Store delay
+		case 0x0007:	// FX07: Store delay
 			v[(opcode & 0x0F00) >> 8] = delay;
 			break;
-		case 0x000A:	// 0xFX0A: Get key
+		case 0x000A:	// FX0A: Get key
 			if (input_state->last_key == -1) {
 				// Halt execution
 				pc -= 2;
@@ -465,22 +493,25 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 				v[(opcode & 0x0F00) >> 8] = input_state->last_key;
 			}
 			break;
-		case 0x0015:	// 0xFX15: Read delay
+		case 0x0015:	// FX15: Read delay
 			delay = v[(opcode & 0x0F00) >> 8];
 			break;
-		case 0x0018:	// 0xFX18: Store sound
+		case 0x0018:	// FX18: Store sound
 			sound = v[(opcode & 0x0F00) >> 8];
 			break;
-		case 0x001E:	// 0xFX1E: Add to index
+		case 0x001E:	// FX1E: Add to index
 			I += v[(opcode & 0x0F00) >> 8];
 			break;
-		case 0x0029:	// 0xFX29: Font character
+		case 0x0029:	// FX29: Font character
 			// The bit pattern `0x0300` masks off the first nibble
 			// of X.
 			// Font characters are 5 bytes long.
 			I = FONT_START + 5 * ((opcode & 0x0300) >> 8);
 			break;
-		case 0x0033:	// 0xFX33: Binary-coded decimal conversion
+		case 0x0030:	// FX30: Set large hex character (SuperChip)
+			// TODO: Implement.
+			break;
+		case 0x0033:	// FX33: Binary-coded decimal conversion
 		{
 			// uint8_t max is 255 so we are always going to be storing
 			// 3 digits.
@@ -489,7 +520,7 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 			}
 			break;
 		}
-		case 0x0055:	// 0xFX55: Store memory
+		case 0x0055:	// FX55: Store memory
 		{
 			uint8_t registers = ((opcode & 0x0F00) >> 8) + 1;
 			for (uint8_t i = 0; i < registers; ++i) {
@@ -511,6 +542,12 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 			}
 			break;
 		}
+		case 0x0075:	// FX75: Save to flag register (SuperChip)
+			// TODO: Implement.
+			break;
+		case 0x0085:	// FX85: Restore from flag register (SuperChip)
+			// TODO: Implement.
+			break;
 		default:
 			break;
 		}
