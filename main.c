@@ -255,39 +255,64 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 	// execute
 	switch (opcode & 0xF000) {
 	case 0x0000:
-		switch (opcode) {
-		case 0x00C0:	// 00CN: Scroll down (SuperChip)
-			// TODO: Implement.
-			break;
-		case 0x00E0:	// 00E0: Clear screen
-			for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
-				for (uint8_t x = 0; x < DISPLAY_WIDTH; ++x) {
-					frame_buf[y * DISPLAY_WIDTH + x] = 0;
+	{
+		bool matched = false;
+		if (mode == SuperChip) {
+			switch (opcode & 0x00F0) {
+			case 0x00C0:	// 00CN: Scroll down (SuperChip)
+			{
+				uint8_t n = opcode & 0x000F;
+				for (int32_t source = DISPLAY_HEIGHT - n - 1; source >= 0; --source) {
+					int32_t target = source + n;
+					for (uint8_t x = 0; x < DISPLAY_WIDTH; ++x) {
+						// We need 16-bit to index into the hi-res 128x64
+						// frame buffer.
+						uint16_t x_source = source * DISPLAY_WIDTH + x,
+							x_target = target * DISPLAY_WIDTH + x;
+						frame_buf[x_target] = frame_buf[x_source];
+						frame_buf[x_source] = 0;
+					}
 				}
+				matched = true;
+				break;
 			}
-			*display_op = CLEAR;
-			break;
-		case 0x00EE:	// 00EE: Subroutines
-			// WARN: Potential bounds bug
-			pc = stack[--stack_pointer];
-			break;
+			default:
+				break;
+			}
 		}
-		case 0x00FB:	// 00FB: Scroll right (SuperChip)
-			// TODO: Implement.
-			break;
-		case 0x00FC:	// 00FC: Scroll left (SuperChip)
-			// TODO: Implement.
-			break;
-		case 0x00FD:	// 00FD: Exit (SuperChip)
-			// TODO: Implement.
-			break;
-		case 0x00FE:	// 00FE: Lores (SuperChip)
-			// TODO: Implement.
-			break;
-		case 0x00FF:	// 00FF: Hires (SuperChip)
-			// TODO: Implement.
-			break;
+		if (!matched) {
+			switch (opcode) {
+			case 0x00E0:	// 00E0: Clear screen
+				for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
+					for (uint8_t x = 0; x < DISPLAY_WIDTH; ++x) {
+						frame_buf[y * DISPLAY_WIDTH + x] = 0;
+					}
+				}
+				*display_op = CLEAR;
+				break;
+			case 0x00EE:	// 00EE: Subroutines
+				// WARN: Potential bounds bug
+				pc = stack[--stack_pointer];
+				break;
+			case 0x00FB:	// 00FB: Scroll right (SuperChip)
+				// TODO: Implement.
+				break;
+			case 0x00FC:	// 00FC: Scroll left (SuperChip)
+				// TODO: Implement.
+				break;
+			case 0x00FD:	// 00FD: Exit (SuperChip)
+				// TODO: Implement.
+				break;
+			case 0x00FE:	// 00FE: Lores (SuperChip)
+				// TODO: Implement.
+				break;
+			case 0x00FF:	// 00FF: Hires (SuperChip)
+				// TODO: Implement.
+				break;
+			}
+		}
 		break;
+	}
 	case 0x1000:		// 1000: Jump
 		pc = opcode & 0x0FFF;
 		break;
