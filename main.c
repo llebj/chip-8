@@ -241,6 +241,7 @@ bool parse_opts(int argc, char** argv, struct opts* opts)
 void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, enum Mode mode)
 {
 	// TODO: Implement SUPER-CHIP.
+	// TODO: Clean up the flow control in this function.
 	
 	// Storage for the current opcode read during the fetch loop.
 	uint16_t opcode = 0;
@@ -256,11 +257,23 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 	switch (opcode & 0xF000) {
 	case 0x0000:
 	{
+		/*
+		 * The flow control in this section is kind of goofy. The 0x00CN
+		 * instruction is identified by the 2nd nybble, differentiating
+		 * it from all other instructions within the 0x0000 outer block.
+		 * This means that an additional switch statement is required.
+		 * The `if-else` is used to clearly differentiate this special
+		 * instruction from the others in the 0x0000 block, and the `matched`
+		 * flag is used to indicate whether further cases within this
+		 * block should be checked. This entire function is getting out
+		 * of control, but this section is particularly confusing.
+		 */
 		bool matched = false;
 		if (mode == SuperChip) {
 			switch (opcode & 0x00F0) {
 			case 0x00C0:	// 00CN: Scroll down (SuperChip)
 			{
+				matched = true;
 				uint8_t n = opcode & 0x000F;
 				for (int32_t source = DISPLAY_HEIGHT - n - 1; source >= 0; --source) {
 					int32_t target = source + n;
@@ -268,12 +281,11 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 						// We need 16-bit to index into the hi-res 128x64
 						// frame buffer.
 						uint16_t x_source = source * DISPLAY_WIDTH + x,
-							x_target = target * DISPLAY_WIDTH + x;
+							 x_target = target * DISPLAY_WIDTH + x;
 						frame_buf[x_target] = frame_buf[x_source];
 						frame_buf[x_source] = 0;
 					}
 				}
-				matched = true;
 				break;
 			}
 			default:
@@ -295,10 +307,36 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state, e
 				pc = stack[--stack_pointer];
 				break;
 			case 0x00FB:	// 00FB: Scroll right (SuperChip)
-				// TODO: Implement.
+				if (mode == SuperChip) {
+					for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
+						// Scroll is always 4px, so we subtract 5 to get the source
+						// index.
+						for (int32_t source = DISPLAY_WIDTH - 5; source >= 0; --source) {
+							int32_t target = source + 4;
+							// We need 16-bit to index into the hi-res 128x64
+							// frame buffer.
+							uint16_t y_source = y * DISPLAY_WIDTH + source,
+								 y_target = y * DISPLAY_WIDTH + target;
+							frame_buf[y_target] = frame_buf[y_source];
+							frame_buf[y_source] = 0;
+						}
+					}
+				}
 				break;
 			case 0x00FC:	// 00FC: Scroll left (SuperChip)
-				// TODO: Implement.
+				if (mode == SuperChip) {
+					for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
+						for (int32_t source = 4; source < DISPLAY_WIDTH; ++source) {
+							int32_t target = source - 4;
+							// We need 16-bit to index into the hi-res 128x64
+							// frame buffer.
+							uint16_t y_source = y * DISPLAY_WIDTH + source,
+								 y_target = y * DISPLAY_WIDTH + target;
+							frame_buf[y_target] = frame_buf[y_source];
+							frame_buf[y_source] = 0;
+						}
+					}
+				}
 				break;
 			case 0x00FD:	// 00FD: Exit (SuperChip)
 				// TODO: Implement.
