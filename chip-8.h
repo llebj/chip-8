@@ -41,10 +41,13 @@ struct chip8 {
 	uint8_t delay;
 	uint8_t sound;
 };
-struct framebuffer {
-	uint8_t buffer[FRAME_BUF_MAX];
+struct dims {
 	uint8_t width;
 	uint8_t height;
+};
+struct framebuffer {
+	uint8_t buffer[FRAME_BUF_MAX];
+	struct dims dims;
 };
 
 // ---------
@@ -58,8 +61,8 @@ enum DisplayOp {
 };
 
 void clear_screen();
-void draw(uint8_t frame_buf[], size_t len);
-uint8_t init_display();
+void draw(uint8_t frame_buf[], struct dims dims);
+uint8_t init_display(struct dims dims);
 void destroy_display();
 
 // -------

@@ -12,9 +12,9 @@ SDL_Renderer *renderer = NULL;
 SDL_Texture *texture = NULL;
 
 // Initialises the display resources. Returns a bit flag indicating success.
-uint8_t init_display()
+uint8_t init_display(struct dims dims)
 {
-	if (!(window = SDL_CreateWindow("CHIP-8", DISPLAY_WIDTH * 10, DISPLAY_HEIGHT * 10, 0))) {
+	if (!(window = SDL_CreateWindow("CHIP-8", dims.width * 10, dims.height * 10, 0))) {
 		SDL_Log("Failed to crate window: %s\n", SDL_GetError());
 		return 0;
 	}
@@ -28,15 +28,15 @@ uint8_t init_display()
 	}
 	if (!SDL_SetRenderLogicalPresentation(
 					renderer,
-					DISPLAY_WIDTH,
-					DISPLAY_HEIGHT,
+					dims.width,
+					dims.height,
 					SDL_LOGICAL_PRESENTATION_LETTERBOX)) {
 		SDL_Log("Failed to set render logical presentation: %s\n", SDL_GetError());
 		return 0;
 	}
 	if (!(texture = SDL_CreateTexture(renderer,
 			SDL_PIXELFORMAT_ABGR32, SDL_TEXTUREACCESS_STREAMING,
-			DISPLAY_WIDTH, DISPLAY_HEIGHT))) {
+			dims.width, dims.height))) {
 		SDL_Log("Failed to create texture: %s\n", SDL_GetError());
 		return 0;
 	}
@@ -62,7 +62,7 @@ void clear_screen()
 
 // This function re-draws the entire screen each time. Can this be improved
 // be only drawing the individual sprites?
-void draw(uint8_t frame_buf[], size_t len)
+void draw(uint8_t frame_buf[], struct dims dims)
 {
 	clear_screen();
 
@@ -77,9 +77,10 @@ void draw(uint8_t frame_buf[], size_t len)
 	// pitch refers to the size in bytes so we divide by 4 to get the number
 	// of 32-bit chunks i.e., a single pixel.
 	qpitch = pitch / 4;
-	for (uint16_t i = 0; i < DISPLAY_HEIGHT; i++) {
-		for (uint16_t j = 0, p = 0; j < DISPLAY_WIDTH; j++) {
-			p = i * DISPLAY_WIDTH + j;
+	uint32_t len = dims.height * dims.width;
+	for (uint16_t i = 0; i < dims.height; i++) {
+		for (uint16_t j = 0, p = 0; j < dims.width; j++) {
+			p = i * dims.width + j;
 			if (p >= len) {
 				break;
 			}

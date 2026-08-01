@@ -81,12 +81,12 @@ int main(int argc, char** argv)
 		.buffer = {0}
 	};
 	if (opts.mode == Chip8) {
-		framebuffer.height = 32;
-		framebuffer.width = 64;
+		framebuffer.dims.height = 32;
+		framebuffer.dims.width = 64;
 	}
 	else {
-		framebuffer.height = 64;
-		framebuffer.width = 128;
+		framebuffer.dims.height = 64;
+		framebuffer.dims.width = 128;
 	}
 	struct chip8 vm = {
 		.mode = opts.mode,
@@ -119,7 +119,7 @@ int main(int argc, char** argv)
 		SDL_Quit();
 		exit(1);
 	}
-	if (!init_display()) {
+	if (!init_display(vm.frame_buf->dims)) {
 		SDL_Quit();
 		exit(1);
 	}
@@ -138,9 +138,10 @@ int main(int argc, char** argv)
 	SDL_srand(SDL_GetTicksNS());
 	enum DisplayOp display_op = NOOP;
 	bool quit = false;
-	struct input_state input_state;
-	memset(input_state.kb_state, 0, sizeof(input_state.kb_state));
-	input_state.last_key = -1;
+	struct input_state input_state = {
+		.kb_state = {0},
+		.last_key = -1
+	};
 
 	// Move the program counter to the start of the ROM
 	vm.pc = ROM_START;
@@ -168,7 +169,7 @@ int main(int argc, char** argv)
 
 		if (display_op == DRAW) {
 			draw(vm.frame_buf->buffer,
-				vm.frame_buf->width * vm.frame_buf->height);
+				vm.frame_buf->dims);
 		}
 		else if (display_op == CLEAR) {
 			clear_screen();
@@ -286,13 +287,13 @@ void execute_loop(struct chip8* vm, enum DisplayOp* display_op, struct input_sta
 			{
 				matched = true;
 				uint8_t n = opcode & 0x000F;
-				for (int32_t source = DISPLAY_HEIGHT - n - 1; source >= 0; --source) {
+				for (int32_t source = vm->frame_buf->dims.height - n - 1; source >= 0; --source) {
 					int32_t target = source + n;
-					for (uint8_t x = 0; x < DISPLAY_WIDTH; ++x) {
+					for (uint8_t x = 0; x < vm->frame_buf->dims.width; ++x) {
 						// We need 16-bit to index into the hi-res 128x64
 						// frame buffer.
-						uint16_t x_source = source * DISPLAY_WIDTH + x,
-							 x_target = target * DISPLAY_WIDTH + x;
+						uint16_t x_source = source * vm->frame_buf->dims.width + x,
+							 x_target = target * vm->frame_buf->dims.width + x;
 						vm->frame_buf->buffer[x_target] = vm->frame_buf->buffer[x_source];
 						vm->frame_buf->buffer[x_source] = 0;
 					}
@@ -306,9 +307,9 @@ void execute_loop(struct chip8* vm, enum DisplayOp* display_op, struct input_sta
 		if (!matched) {
 			switch (opcode) {
 			case 0x00E0:	// 00E0: Clear screen
-				for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
-					for (uint8_t x = 0; x < DISPLAY_WIDTH; ++x) {
-						vm->frame_buf->buffer[y * DISPLAY_WIDTH + x] = 0;
+				for (uint8_t y = 0; y < vm->frame_buf->dims.height; ++y) {
+					for (uint8_t x = 0; x < vm->frame_buf->dims.width; ++x) {
+						vm->frame_buf->buffer[y * vm->frame_buf->dims.width + x] = 0;
 					}
 				}
 				*display_op = CLEAR;
@@ -319,15 +320,15 @@ void execute_loop(struct chip8* vm, enum DisplayOp* display_op, struct input_sta
 				break;
 			case 0x00FB:	// 00FB: Scroll right (SuperChip)
 				if (vm->mode == SuperChip) {
-					for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
+					for (uint8_t y = 0; y < vm->frame_buf->dims.height; ++y) {
 						// Scroll is always 4px, so we subtract 5 to get the source
 						// index.
-						for (int32_t source = DISPLAY_WIDTH - 5; source >= 0; --source) {
+						for (int32_t source = vm->frame_buf->dims.width - 5; source >= 0; --source) {
 							int32_t target = source + 4;
 							// We need 16-bit to index into the hi-res 128x64
 							// frame buffer.
-							uint16_t y_source = y * DISPLAY_WIDTH + source,
-								 y_target = y * DISPLAY_WIDTH + target;
+							uint16_t y_source = y * vm->frame_buf->dims.width + source,
+								 y_target = y * vm->frame_buf->dims.width + target;
 							vm->frame_buf->buffer[y_target] = vm->frame_buf->buffer[y_source];
 							vm->frame_buf->buffer[y_source] = 0;
 						}
@@ -336,13 +337,13 @@ void execute_loop(struct chip8* vm, enum DisplayOp* display_op, struct input_sta
 				break;
 			case 0x00FC:	// 00FC: Scroll left (SuperChip)
 				if (vm->mode == SuperChip) {
-					for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
-						for (int32_t source = 4; source < DISPLAY_WIDTH; ++source) {
+					for (uint8_t y = 0; y < vm->frame_buf->dims.height; ++y) {
+						for (int32_t source = 4; source < vm->frame_buf->dims.width; ++source) {
 							int32_t target = source - 4;
 							// We need 16-bit to index into the hi-res 128x64
 							// frame buffer.
-							uint16_t y_source = y * DISPLAY_WIDTH + source,
-								 y_target = y * DISPLAY_WIDTH + target;
+							uint16_t y_source = y * vm->frame_buf->dims.width + source,
+								 y_target = y * vm->frame_buf->dims.width + target;
 							vm->frame_buf->buffer[y_target] = vm->frame_buf->buffer[y_source];
 							vm->frame_buf->buffer[y_source] = 0;
 						}
@@ -505,8 +506,8 @@ void execute_loop(struct chip8* vm, enum DisplayOp* display_op, struct input_sta
 		default:	// DXYN: Draw
 		{
 			// Variables used to store values from the display instruction.
-			uint8_t sx = vm->v[(opcode & 0x0F00) >> 8] % DISPLAY_WIDTH,
-				sy = vm->v[(opcode & 0x00F0) >> 4] % DISPLAY_HEIGHT,
+			uint8_t sx = vm->v[(opcode & 0x0F00) >> 8] % vm->frame_buf->dims.width,
+				sy = vm->v[(opcode & 0x00F0) >> 4] % vm->frame_buf->dims.height,
 				height = opcode & 0x000F,
 				line = 0;
 			vm->v[0xF] = 0;
@@ -514,23 +515,23 @@ void execute_loop(struct chip8* vm, enum DisplayOp* display_op, struct input_sta
 			// We want to write the sprite data to N lines, starting at
 			// Y. We need to ensure that we clip any lines that exceed
 			// the height of the raster.
-			for (uint8_t y = 0; y < height && sy + y < DISPLAY_HEIGHT; ++y) {
+			for (uint8_t y = 0; y < height && sy + y < vm->frame_buf->dims.height; ++y) {
 				line = vm->memory[vm->I + y];
 				// We want to write the sprite data at `I + y` onto the
 				// current line, starting at X. We need to clip
 				// the data if it exceeds the width of the raster.
 				// Sprites are always 8 pixels wide.
-				for (uint8_t x = 0; x < 8 && sx + x < DISPLAY_WIDTH; ++x) {
+				for (uint8_t x = 0; x < 8 && sx + x < vm->frame_buf->dims.width; ++x) {
 					// `0x80 >> x` is used to mask off the x-th bit in
 					// `line`, from most-significant to least-significant
 					// bit.
 					if ((line & (0x80 >> x)) == 0) {
 						continue;
 					}
-					if (vm->frame_buf->buffer[(sy + y) * DISPLAY_WIDTH + (sx + x)] == 1) {
+					if (vm->frame_buf->buffer[(sy + y) * vm->frame_buf->dims.width + (sx + x)] == 1) {
 						vm->v[0xF] = 1;
 					}
-					vm->frame_buf->buffer[(sy + y) * DISPLAY_WIDTH + (sx + x)] ^= 1;
+					vm->frame_buf->buffer[(sy + y) * vm->frame_buf->dims.width + (sx + x)] ^= 1;
 				}
 			}
 			*display_op = DRAW;
