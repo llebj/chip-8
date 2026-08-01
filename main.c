@@ -13,7 +13,6 @@
 #include <SDL3/SDL_pixels.h>
 #include <SDL3/SDL_render.h>
 #include <SDL3/SDL_scancode.h>
-#include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_surface.h>
 #include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_video.h>
@@ -21,7 +20,6 @@
 #include "chip-8.h"
 
 #define NANOSEC 1000000000L
-#define FRAME_BUF_LEN (DISPLAY_HEIGHT * DISPLAY_WIDTH)
 
 enum Mode {
 	Chip8,
@@ -32,18 +30,6 @@ struct opts {
 	bool dump_rom;
 	enum Mode mode;
 	char* file_name;
-};
-
-struct vm_state {
-	uint8_t memory[MEM_SIZE];
-	uint16_t pc;
-	uint16_t I;
-	uint8_t v[16];
-	uint16_t stack[16];
-	uint8_t stack_pointer;
-	uint8_t delay;
-	uint8_t sound;
-	uint8_t frame_buf[FRAME_BUF_LEN];
 };
 
 uint8_t const font[] = {
@@ -65,7 +51,6 @@ uint8_t const font[] = {
 	0xF0, 0x80, 0xF0, 0x80, 0x80  // F
 };
 
-void execute_loop(struct vm_state* vm_state, enum DisplayOp* display_op, struct input_state* input_state);
 bool parse_opts(int argc, char** argv, struct opts* opts);
 void show_help(char* file_name);
 
@@ -166,7 +151,9 @@ int main(int argc, char** argv)
 		// The emulator loop runs faster than the frame rate; we can fit
 		// `cycles_ps / frames_ps` emulator cycles for each rendered frame.
 		for (int inst = 0; inst < cycles_ps / TARGET_FPS; ++inst) {
-			execute_loop(&vm_state, &display_op, &input_state);
+			uint16_t opcode = fetch(&vm_state);
+			struct instruction inst = decode(opcode);
+			execute(&inst, &vm_state, &display_op, &input_state);
 		}
 
 		if (display_op == DRAW) {
@@ -239,276 +226,5 @@ bool parse_opts(int argc, char** argv, struct opts* opts)
 	}
 
 	return result;
-}
-
-/*
- * Executes one iteration of the fetch-decode-execute loop. Inputs:
- */
-void execute_loop(struct vm_state* vm_state, enum DisplayOp* display_op, struct input_state* input_state)
-{
-	// TODO: Implement SUPER-CHIP.
-	
-	// Storage for the current opcode read during the fetch loop.
-	uint16_t opcode = 0;
-
-	// fetch
-	// CHIP-8 instructions are two bytes. Therefore we are reading the
-	// higher order byte first.
-	opcode = (vm_state->memory[vm_state->pc++] & 0xFF) << 8;
-	opcode |= (vm_state->memory[vm_state->pc++] & 0xFF);
-
-	// decode
-	// execute
-	switch (opcode & 0xF000) {
-	case 0x0000:
-		switch (opcode) {
-		case 0x00E0:	// O0E0: Clear screen
-			for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
-				for (uint8_t x = 0; x < DISPLAY_WIDTH; ++x) {
-					vm_state->frame_buf[y * DISPLAY_WIDTH + x] = 0;
-				}
-			}
-			*display_op = CLEAR;
-			break;
-		case 0x00EE:	// OOEE: Subroutines
-			// WARN: Potential bounds bug
-			vm_state->pc = vm_state->stack[--vm_state->stack_pointer];
-			break;
-		}
-		break;
-	case 0x1000:		// 1000: Jump
-		vm_state->pc = opcode & 0x0FFF;
-		break;
-	case 0x2000:		// 2000: Subroutines
-		// WARN: Potential bounds bug
-		vm_state->stack[vm_state->stack_pointer++] = vm_state->pc;
-		vm_state->pc = opcode & 0x0FFF;
-		break;
-	case 0x3000:		// 3XNN: Skip conditionally
-		if (vm_state->v[(opcode & 0x0F00) >> 8] == (opcode & 0x00FF)) {
-			vm_state->pc += 2;
-		}
-		break;
-	case 0x4000:		// 4XNN: Skip conditionally
-		if (vm_state->v[(opcode & 0x0F00) >> 8] != (opcode & 0x00FF)) {
-			vm_state->pc += 2;
-		}
-		break;
-	case 0x5000:		// 5XY0: Skip conditionally
-		if (vm_state->v[(opcode & 0x0F00) >> 8] == vm_state->v[(opcode & 0x00F0) >> 4]) {
-			vm_state->pc += 2;
-		}
-		break;
-	case 0x6000:		// 6XNN: Set
-		// Set VX to NN
-		vm_state->v[(opcode & 0x0F00) >> 8] = opcode & 0x00FF;
-		break;
-	case 0x7000:		// 7XNN: Add
-		// Add NN to VX
-		vm_state->v[(opcode & 0x0F00) >> 8] += opcode & 0x00FF;
-		break;
-	case 0x8000:
-		switch (opcode & 0x000F) {
-		case 0x0000:	// 8XY0: Set
-			vm_state->v[(opcode & 0x0F00) >> 8] = vm_state->v[(opcode & 0x00F0) >> 4];
-			break;
-		case 0x0001:	// 8XY1: Binary OR
-			vm_state->v[(opcode & 0x0F00) >> 8] |= vm_state->v[(opcode & 0x00F0) >> 4];
-			vm_state->v[0xF] = 0;
-			break;
-		case 0x0002:	// 8XY2: Binary AND
-			vm_state->v[(opcode & 0x0F00) >> 8] &= vm_state->v[(opcode & 0x00F0) >> 4];
-			vm_state->v[0xF] = 0;
-			break;
-		case 0x0003:	// 8XY3: Binary XOR
-			vm_state->v[(opcode & 0x0F00) >> 8] ^= vm_state->v[(opcode & 0x00F0) >> 4];
-			vm_state->v[0xF] = 0;
-			break;
-		case 0x0004:	// 8XY4: Add
-		{
-			// Set the carry flag if VX + VY overflows VX
-			uint8_t vx = (opcode & 0x0F00) >> 8,
-				vy = (opcode & 0x00F0) >> 4,
-				carry = (0xFF - vm_state->v[vx]) < vm_state->v[vy];
-			vm_state->v[vx] += vm_state->v[vy];
-			vm_state->v[0xF] = carry;
-			break;
-		}
-		case 0x0005:	// 8XY5: Subtract
-		{
-			// Set the carry flag to 0 if we underflow and 1 otherwise
-			uint8_t vx = (opcode & 0x0F00) >> 8,
-				vy = (opcode & 0x00F0) >> 4,
-				carry = vm_state->v[vx] >= vm_state->v[vy];
-			vm_state->v[vx] -= vm_state->v[vy];
-			vm_state->v[0xF] = carry;
-			break;
-		}
-		case 0x0006:	// 8XY6: Shift
-		{
-			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
-			uint8_t vx = (opcode & 0x0F00) >> 8,
-				vy = (opcode & 0x00F0) >> 4,
-				carry = 0;
-			vm_state->v[vx] = vm_state->v[vy];
-			// Set the flag register to the value of the shifted-out bit.
-			carry = vm_state->v[vx] & 1;
-			vm_state->v[vx] >>= 1;
-			vm_state->v[0xF] = carry;
-			break;
-		}
-		case 0x0007:	// 8XY7: Subtract
-		{
-			// Set the carry flag to 0 if we underflow and 1 otherwise
-			uint8_t vx = (opcode & 0x0F00) >> 8,
-				vy = (opcode & 0x00F0) >> 4,
-				carry = vm_state->v[vy] >= vm_state->v[vx];
-			vm_state->v[vx] = vm_state->v[vy] - vm_state->v[vx];
-			vm_state->v[0xF] = carry;
-			break;
-		}
-		case 0x000E:	// 8XYE: Shift
-		{
-			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
-			uint8_t vx = (opcode & 0x0F00) >> 8,
-				vy = (opcode & 0x00F0) >> 4;
-			// Set the flag register to the value of the shifted-out bit.
-			uint8_t carry = (vm_state->v[vy] & 0x80) >> 7;
-			vm_state->v[vx] = vm_state->v[vy] << 1;
-			vm_state->v[0xF] = carry;
-			break;
-		}
-		}
-		break;
-	case 0x9000:		// 9XY0: Skip conditionally
-		if (vm_state->v[(opcode & 0x0F00) >> 8] != vm_state->v[(opcode & 0x00F0) >> 4]) {
-			vm_state->pc += 2;
-		}
-		break;
-	case 0xA000:		// ANNN: Set index
-		// Set index to NNN
-		vm_state->I = opcode & 0x0FFF; 
-		break;
-	case 0xB000:		// BNNN: Jump with offset
-		// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
-		vm_state->pc = (opcode & 0x0FFF) + vm_state->v[0];
-		break;
-	case 0xC000:		// CXNN: Random
-		vm_state->v[(opcode & 0x0F00) >> 8] = SDL_rand(UINT16_MAX) & (opcode & 0x00FF);
-		break;
-	case 0xD000:		// DXYN: Display
-	{
-		// Variables used to store values from the display instruction.
-		uint8_t sx = vm_state->v[(opcode & 0x0F00) >> 8] % DISPLAY_WIDTH,
-			sy = vm_state->v[(opcode & 0x00F0) >> 4] % DISPLAY_HEIGHT,
-			height = opcode & 0x000F,
-			line = 0;
-		vm_state->v[0xF] = 0;
-
-		// We want to write the sprite data to N lines, starting at
-		// Y. We need to ensure that we clip any lines that exceed
-		// the height of the raster.
-		for (uint8_t y = 0; y < height && sy + y < DISPLAY_HEIGHT; ++y) {
-			line = vm_state->memory[vm_state->I + y];
-			// We want to write the sprite data at `I + y` onto the
-			// current line, starting at X. We need to clip
-			// the data if it exceeds the width of the raster.
-			// Sprites are always 8 pixels wide.
-			for (uint8_t x = 0; x < 8 && sx + x < DISPLAY_WIDTH; ++x) {
-				// `0x80 >> x` is used to mask off the x-th bit in
-				// `line`, from most-significant to least-significant
-				// bit.
-				if ((line & (0x80 >> x)) == 0) {
-					continue;
-				}
-				if (vm_state->frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] == 1) {
-					vm_state->v[0xF] = 1;
-				}
-				vm_state->frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] ^= 1;
-			}
-		}
-		*display_op = DRAW;
-		break;
-	}
-	case 0xE000:
-		switch (opcode & 0x0FF) {
-		case 0x009E:	// 0xE09E: Skip if key
-			if (input_state->kb_state[vm_state->v[(opcode & 0x0F00) >> 8]]) {
-				vm_state->pc += 2;
-			}
-			break;
-		case 0x00A1:	// 0xE0A1: Skip if key
-			if (!input_state->kb_state[vm_state->v[(opcode & 0x0F00) >> 8]]) {
-				vm_state->pc += 2;
-			}
-			break;
-		default:
-			break;
-		}
-	case 0xF000:
-		switch (opcode & 0x00FF) {
-		case 0x0007:	// 0xFX07: Store delay
-			vm_state->v[(opcode & 0x0F00) >> 8] = vm_state->delay;
-			break;
-		case 0x000A:	// 0xFX0A: Get key
-			if (input_state->last_key == -1) {
-				// Halt execution
-				vm_state->pc -= 2;
-			}
-			else {
-				vm_state->v[(opcode & 0x0F00) >> 8] = input_state->last_key;
-			}
-			break;
-		case 0x0015:	// 0xFX15: Read delay
-			vm_state->delay = vm_state->v[(opcode & 0x0F00) >> 8];
-			break;
-		case 0x0018:	// 0xFX18: Store sound
-			vm_state->sound = vm_state->v[(opcode & 0x0F00) >> 8];
-			break;
-		case 0x001E:	// 0xFX1E: Add to index
-			vm_state->I += vm_state->v[(opcode & 0x0F00) >> 8];
-			break;
-		case 0x0029:	// 0xFX29: Font character
-			// The bit pattern `0x0300` masks off the first nibble
-			// of X.
-			// Font characters are 5 bytes long.
-			vm_state->I = FONT_START + 5 * ((opcode & 0x0300) >> 8);
-			break;
-		case 0x0033:	// 0xFX33: Binary-coded decimal conversion
-		{
-			// uint8_t max is 255 so we are always going to be storing
-			// 3 digits.
-			for (uint8_t i = 3, vx = vm_state->v[(opcode & 0x0F00) >> 8]; i > 0; --i, vx /= 10) {
-				vm_state->memory[vm_state->I + i - 1] = vx % 10;
-			}
-			break;
-		}
-		case 0x0055:	// 0xFX55: Store memory
-		{
-			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
-			uint8_t registers = ((opcode & 0x0F00) >> 8) + 1;
-			for (uint8_t i = 0; i < registers; ++i) {
-				vm_state->memory[vm_state->I + i] = vm_state->v[i];
-			}
-			vm_state->I += registers;
-			break;
-		}
-		case 0x0065:	// 0xFX65: Load memory
-		{
-			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
-			uint8_t registers = ((opcode & 0x0F00) >> 8) + 1;
-			for (uint8_t i = 0; i < registers; ++i) {
-				vm_state->v[i] = vm_state->memory[vm_state->I + i];
-			}
-			vm_state->I += registers;
-			break;
-		}
-		default:
-			break;
-		}
-		break;
-	default:
-		break;
-	}
 }
 
