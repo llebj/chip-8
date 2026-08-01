@@ -25,7 +25,6 @@
 
 enum Mode {
 	Chip8,
-	SuperChip
 };
 
 struct opts {
@@ -35,14 +34,17 @@ struct opts {
 	char* file_name;
 };
 
-uint8_t memory[MEM_SIZE];
-uint16_t pc = 0;
-uint16_t I = 0;
-uint16_t stack[16];
-uint8_t stack_pointer = 0;
-uint8_t delay = 0;
-uint8_t sound = 0;
-uint8_t v[16];
+struct vm_state {
+	uint8_t memory[MEM_SIZE];
+	uint16_t pc;
+	uint16_t I;
+	uint8_t v[16];
+	uint16_t stack[16];
+	uint8_t stack_pointer;
+	uint8_t delay;
+	uint8_t sound;
+	uint8_t frame_buf[FRAME_BUF_LEN];
+};
 
 uint8_t const font[] = {
 	0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -63,13 +65,11 @@ uint8_t const font[] = {
 	0xF0, 0x80, 0xF0, 0x80, 0x80  // F
 };
 
-void execute_loop(enum DisplayOp* display_op, struct input_state* input_state);
+void execute_loop(struct vm_state* vm_state, enum DisplayOp* display_op, struct input_state* input_state);
 bool parse_opts(int argc, char** argv, struct opts* opts);
 void show_help(char* file_name);
 
 int rom_size = 0;
-
-uint8_t frame_buf[FRAME_BUF_LEN];
 
 int main(int argc, char** argv)
 {
@@ -92,15 +92,26 @@ int main(int argc, char** argv)
 		exit(0);
 	}
 
+	struct vm_state vm_state = {
+		.delay = 0,
+		.I = 0,
+		.pc = 0,
+		.sound = 0,
+		.stack = {0},
+		.stack_pointer = 0,
+		.v = {0},
+		.frame_buf = {0},
+	};
+
 	// Copy the font data into memory starting at `memory + FONT_START`.
-	memcpy(memory + FONT_START, font, sizeof(font));
-	if ((rom_size = load_rom(argv[argc - 1], memory + ROM_START)) == 0) {
+	memcpy(vm_state.memory + FONT_START, font, sizeof(font));
+	if ((rom_size = load_rom(argv[argc - 1], vm_state.memory + ROM_START)) == 0) {
 		printf("Failed to load ROM.\n");
 		exit(1);
 	}
 
 	if (opts.dump_rom) {
-		dump_rom(memory + ROM_START, rom_size);
+		dump_rom(vm_state.memory + ROM_START, rom_size);
 		exit(0);
 	}
 
@@ -129,23 +140,24 @@ int main(int argc, char** argv)
 	SDL_srand(SDL_GetTicksNS());
 	enum DisplayOp display_op = NOOP;
 	bool quit = false;
-	struct input_state input_state;
-	memset(input_state.kb_state, 0, sizeof(input_state.kb_state));
-	input_state.last_key = -1;
+	struct input_state input_state = {
+		.kb_state = {0},
+		.last_key = -1
+	};
 
 	// Move the program counter to the start of the ROM
-	pc = ROM_START;
+	vm_state.pc = ROM_START;
 	while (!quit) {
 		display_op = NOOP;
 		// Most recently pressed key; -1 indicates no key pressed
 		input_state.last_key = -1;
 		t0 = SDL_GetTicksNS();
 
-		if (delay > 0) {
-			--delay;
+		if (vm_state.delay > 0) {
+			--vm_state.delay;
 		}
-		if (sound > 0) {
-			--sound;
+		if (vm_state.sound > 0) {
+			--vm_state.sound;
 			generate_samples();
 		}
 
@@ -154,11 +166,11 @@ int main(int argc, char** argv)
 		// The emulator loop runs faster than the frame rate; we can fit
 		// `cycles_ps / frames_ps` emulator cycles for each rendered frame.
 		for (int inst = 0; inst < cycles_ps / TARGET_FPS; ++inst) {
-			execute_loop(&display_op, &input_state);
+			execute_loop(&vm_state, &display_op, &input_state);
 		}
 
 		if (display_op == DRAW) {
-			draw(frame_buf, FRAME_BUF_LEN);
+			draw(vm_state.frame_buf, FRAME_BUF_LEN);
 		}
 		else if (display_op == CLEAR) {
 			clear_screen();
@@ -183,7 +195,7 @@ int main(int argc, char** argv)
 void show_help(char* file_name)
 {
 	printf("Usage:\n"
-		"\t%s [ --mode { ch8 | sch } ] <rom_file_path>\n"
+		"\t%s [ --mode { ch8 } ] <rom_file_path>\n"
 		"\t%s --dump-rom <rom_file_path>\n", file_name, file_name);
 }
 
@@ -211,9 +223,6 @@ bool parse_opts(int argc, char** argv, struct opts* opts)
 			if (strcmp(mode, "ch8") == 0) {
 				opts->mode = Chip8;
 			}
-			else if (strcmp(mode, "sch") == 0) {
-				opts->mode = SuperChip;
-			}
 			else {
 				// We have an un-defined mode string.
 				result = false;
@@ -234,11 +243,8 @@ bool parse_opts(int argc, char** argv, struct opts* opts)
 
 /*
  * Executes one iteration of the fetch-decode-execute loop. Inputs:
- *	`display_op`: A pointer to a variable of type `DisplayOp` which controls
- *		      display output operations; this function mutates that
- *		      external state.
  */
-void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
+void execute_loop(struct vm_state* vm_state, enum DisplayOp* display_op, struct input_state* input_state)
 {
 	// TODO: Implement SUPER-CHIP.
 	
@@ -248,8 +254,8 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 	// fetch
 	// CHIP-8 instructions are two bytes. Therefore we are reading the
 	// higher order byte first.
-	opcode = (memory[pc++] & 0xFF) << 8;
-	opcode |= (memory[pc++] & 0xFF);
+	opcode = (vm_state->memory[vm_state->pc++] & 0xFF) << 8;
+	opcode |= (vm_state->memory[vm_state->pc++] & 0xFF);
 
 	// decode
 	// execute
@@ -259,73 +265,73 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 		case 0x00E0:	// O0E0: Clear screen
 			for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
 				for (uint8_t x = 0; x < DISPLAY_WIDTH; ++x) {
-					frame_buf[y * DISPLAY_WIDTH + x] = 0;
+					vm_state->frame_buf[y * DISPLAY_WIDTH + x] = 0;
 				}
 			}
 			*display_op = CLEAR;
 			break;
 		case 0x00EE:	// OOEE: Subroutines
 			// WARN: Potential bounds bug
-			pc = stack[--stack_pointer];
+			vm_state->pc = vm_state->stack[--vm_state->stack_pointer];
 			break;
 		}
 		break;
 	case 0x1000:		// 1000: Jump
-		pc = opcode & 0x0FFF;
+		vm_state->pc = opcode & 0x0FFF;
 		break;
 	case 0x2000:		// 2000: Subroutines
 		// WARN: Potential bounds bug
-		stack[stack_pointer++] = pc;
-		pc = opcode & 0x0FFF;
+		vm_state->stack[vm_state->stack_pointer++] = vm_state->pc;
+		vm_state->pc = opcode & 0x0FFF;
 		break;
 	case 0x3000:		// 3XNN: Skip conditionally
-		if (v[(opcode & 0x0F00) >> 8] == (opcode & 0x00FF)) {
-			pc += 2;
+		if (vm_state->v[(opcode & 0x0F00) >> 8] == (opcode & 0x00FF)) {
+			vm_state->pc += 2;
 		}
 		break;
 	case 0x4000:		// 4XNN: Skip conditionally
-		if (v[(opcode & 0x0F00) >> 8] != (opcode & 0x00FF)) {
-			pc += 2;
+		if (vm_state->v[(opcode & 0x0F00) >> 8] != (opcode & 0x00FF)) {
+			vm_state->pc += 2;
 		}
 		break;
 	case 0x5000:		// 5XY0: Skip conditionally
-		if (v[(opcode & 0x0F00) >> 8] == v[(opcode & 0x00F0) >> 4]) {
-			pc += 2;
+		if (vm_state->v[(opcode & 0x0F00) >> 8] == vm_state->v[(opcode & 0x00F0) >> 4]) {
+			vm_state->pc += 2;
 		}
 		break;
 	case 0x6000:		// 6XNN: Set
 		// Set VX to NN
-		v[(opcode & 0x0F00) >> 8] = opcode & 0x00FF;
+		vm_state->v[(opcode & 0x0F00) >> 8] = opcode & 0x00FF;
 		break;
 	case 0x7000:		// 7XNN: Add
 		// Add NN to VX
-		v[(opcode & 0x0F00) >> 8] += opcode & 0x00FF;
+		vm_state->v[(opcode & 0x0F00) >> 8] += opcode & 0x00FF;
 		break;
 	case 0x8000:
 		switch (opcode & 0x000F) {
 		case 0x0000:	// 8XY0: Set
-			v[(opcode & 0x0F00) >> 8] = v[(opcode & 0x00F0) >> 4];
+			vm_state->v[(opcode & 0x0F00) >> 8] = vm_state->v[(opcode & 0x00F0) >> 4];
 			break;
 		case 0x0001:	// 8XY1: Binary OR
-			v[(opcode & 0x0F00) >> 8] |= v[(opcode & 0x00F0) >> 4];
-			v[0xF] = 0;
+			vm_state->v[(opcode & 0x0F00) >> 8] |= vm_state->v[(opcode & 0x00F0) >> 4];
+			vm_state->v[0xF] = 0;
 			break;
 		case 0x0002:	// 8XY2: Binary AND
-			v[(opcode & 0x0F00) >> 8] &= v[(opcode & 0x00F0) >> 4];
-			v[0xF] = 0;
+			vm_state->v[(opcode & 0x0F00) >> 8] &= vm_state->v[(opcode & 0x00F0) >> 4];
+			vm_state->v[0xF] = 0;
 			break;
 		case 0x0003:	// 8XY3: Binary XOR
-			v[(opcode & 0x0F00) >> 8] ^= v[(opcode & 0x00F0) >> 4];
-			v[0xF] = 0;
+			vm_state->v[(opcode & 0x0F00) >> 8] ^= vm_state->v[(opcode & 0x00F0) >> 4];
+			vm_state->v[0xF] = 0;
 			break;
 		case 0x0004:	// 8XY4: Add
 		{
 			// Set the carry flag if VX + VY overflows VX
 			uint8_t vx = (opcode & 0x0F00) >> 8,
 				vy = (opcode & 0x00F0) >> 4,
-				carry = (0xFF - v[vx]) < v[vy];
-			v[vx] += v[vy];
-			v[0xF] = carry;
+				carry = (0xFF - vm_state->v[vx]) < vm_state->v[vy];
+			vm_state->v[vx] += vm_state->v[vy];
+			vm_state->v[0xF] = carry;
 			break;
 		}
 		case 0x0005:	// 8XY5: Subtract
@@ -333,9 +339,9 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 			// Set the carry flag to 0 if we underflow and 1 otherwise
 			uint8_t vx = (opcode & 0x0F00) >> 8,
 				vy = (opcode & 0x00F0) >> 4,
-				carry = v[vx] >= v[vy];
-			v[vx] -= v[vy];
-			v[0xF] = carry;
+				carry = vm_state->v[vx] >= vm_state->v[vy];
+			vm_state->v[vx] -= vm_state->v[vy];
+			vm_state->v[0xF] = carry;
 			break;
 		}
 		case 0x0006:	// 8XY6: Shift
@@ -344,11 +350,11 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 			uint8_t vx = (opcode & 0x0F00) >> 8,
 				vy = (opcode & 0x00F0) >> 4,
 				carry = 0;
-			v[vx] = v[vy];
+			vm_state->v[vx] = vm_state->v[vy];
 			// Set the flag register to the value of the shifted-out bit.
-			carry = v[vx] & 1;
-			v[vx] >>= 1;
-			v[0xF] = carry;
+			carry = vm_state->v[vx] & 1;
+			vm_state->v[vx] >>= 1;
+			vm_state->v[0xF] = carry;
 			break;
 		}
 		case 0x0007:	// 8XY7: Subtract
@@ -356,9 +362,9 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 			// Set the carry flag to 0 if we underflow and 1 otherwise
 			uint8_t vx = (opcode & 0x0F00) >> 8,
 				vy = (opcode & 0x00F0) >> 4,
-				carry = v[vy] >= v[vx];
-			v[vx] = v[vy] - v[vx];
-			v[0xF] = carry;
+				carry = vm_state->v[vy] >= vm_state->v[vx];
+			vm_state->v[vx] = vm_state->v[vy] - vm_state->v[vx];
+			vm_state->v[0xF] = carry;
 			break;
 		}
 		case 0x000E:	// 8XYE: Shift
@@ -367,43 +373,43 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 			uint8_t vx = (opcode & 0x0F00) >> 8,
 				vy = (opcode & 0x00F0) >> 4;
 			// Set the flag register to the value of the shifted-out bit.
-			uint8_t carry = (v[vy] & 0x80) >> 7;
-			v[vx] = v[vy] << 1;
-			v[0xF] = carry;
+			uint8_t carry = (vm_state->v[vy] & 0x80) >> 7;
+			vm_state->v[vx] = vm_state->v[vy] << 1;
+			vm_state->v[0xF] = carry;
 			break;
 		}
 		}
 		break;
 	case 0x9000:		// 9XY0: Skip conditionally
-		if (v[(opcode & 0x0F00) >> 8] != v[(opcode & 0x00F0) >> 4]) {
-			pc += 2;
+		if (vm_state->v[(opcode & 0x0F00) >> 8] != vm_state->v[(opcode & 0x00F0) >> 4]) {
+			vm_state->pc += 2;
 		}
 		break;
 	case 0xA000:		// ANNN: Set index
 		// Set index to NNN
-		I = opcode & 0x0FFF; 
+		vm_state->I = opcode & 0x0FFF; 
 		break;
 	case 0xB000:		// BNNN: Jump with offset
 		// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
-		pc = (opcode & 0x0FFF) + v[0];
+		vm_state->pc = (opcode & 0x0FFF) + vm_state->v[0];
 		break;
 	case 0xC000:		// CXNN: Random
-		v[(opcode & 0x0F00) >> 8] = SDL_rand(UINT16_MAX) & (opcode & 0x00FF);
+		vm_state->v[(opcode & 0x0F00) >> 8] = SDL_rand(UINT16_MAX) & (opcode & 0x00FF);
 		break;
 	case 0xD000:		// DXYN: Display
 	{
 		// Variables used to store values from the display instruction.
-		uint8_t sx = v[(opcode & 0x0F00) >> 8] % DISPLAY_WIDTH,
-			sy = v[(opcode & 0x00F0) >> 4] % DISPLAY_HEIGHT,
+		uint8_t sx = vm_state->v[(opcode & 0x0F00) >> 8] % DISPLAY_WIDTH,
+			sy = vm_state->v[(opcode & 0x00F0) >> 4] % DISPLAY_HEIGHT,
 			height = opcode & 0x000F,
 			line = 0;
-		v[0xF] = 0;
+		vm_state->v[0xF] = 0;
 
 		// We want to write the sprite data to N lines, starting at
 		// Y. We need to ensure that we clip any lines that exceed
 		// the height of the raster.
 		for (uint8_t y = 0; y < height && sy + y < DISPLAY_HEIGHT; ++y) {
-			line = memory[I + y];
+			line = vm_state->memory[vm_state->I + y];
 			// We want to write the sprite data at `I + y` onto the
 			// current line, starting at X. We need to clip
 			// the data if it exceeds the width of the raster.
@@ -415,10 +421,10 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 				if ((line & (0x80 >> x)) == 0) {
 					continue;
 				}
-				if (frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] == 1) {
-					v[0xF] = 1;
+				if (vm_state->frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] == 1) {
+					vm_state->v[0xF] = 1;
 				}
-				frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] ^= 1;
+				vm_state->frame_buf[(sy + y) * DISPLAY_WIDTH + (sx + x)] ^= 1;
 			}
 		}
 		*display_op = DRAW;
@@ -427,13 +433,13 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 	case 0xE000:
 		switch (opcode & 0x0FF) {
 		case 0x009E:	// 0xE09E: Skip if key
-			if (input_state->kb_state[v[(opcode & 0x0F00) >> 8]]) {
-				pc += 2;
+			if (input_state->kb_state[vm_state->v[(opcode & 0x0F00) >> 8]]) {
+				vm_state->pc += 2;
 			}
 			break;
 		case 0x00A1:	// 0xE0A1: Skip if key
-			if (!input_state->kb_state[v[(opcode & 0x0F00) >> 8]]) {
-				pc += 2;
+			if (!input_state->kb_state[vm_state->v[(opcode & 0x0F00) >> 8]]) {
+				vm_state->pc += 2;
 			}
 			break;
 		default:
@@ -442,38 +448,38 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 	case 0xF000:
 		switch (opcode & 0x00FF) {
 		case 0x0007:	// 0xFX07: Store delay
-			v[(opcode & 0x0F00) >> 8] = delay;
+			vm_state->v[(opcode & 0x0F00) >> 8] = vm_state->delay;
 			break;
 		case 0x000A:	// 0xFX0A: Get key
 			if (input_state->last_key == -1) {
 				// Halt execution
-				pc -= 2;
+				vm_state->pc -= 2;
 			}
 			else {
-				v[(opcode & 0x0F00) >> 8] = input_state->last_key;
+				vm_state->v[(opcode & 0x0F00) >> 8] = input_state->last_key;
 			}
 			break;
 		case 0x0015:	// 0xFX15: Read delay
-			delay = v[(opcode & 0x0F00) >> 8];
+			vm_state->delay = vm_state->v[(opcode & 0x0F00) >> 8];
 			break;
 		case 0x0018:	// 0xFX18: Store sound
-			sound = v[(opcode & 0x0F00) >> 8];
+			vm_state->sound = vm_state->v[(opcode & 0x0F00) >> 8];
 			break;
 		case 0x001E:	// 0xFX1E: Add to index
-			I += v[(opcode & 0x0F00) >> 8];
+			vm_state->I += vm_state->v[(opcode & 0x0F00) >> 8];
 			break;
 		case 0x0029:	// 0xFX29: Font character
 			// The bit pattern `0x0300` masks off the first nibble
 			// of X.
 			// Font characters are 5 bytes long.
-			I = FONT_START + 5 * ((opcode & 0x0300) >> 8);
+			vm_state->I = FONT_START + 5 * ((opcode & 0x0300) >> 8);
 			break;
 		case 0x0033:	// 0xFX33: Binary-coded decimal conversion
 		{
 			// uint8_t max is 255 so we are always going to be storing
 			// 3 digits.
-			for (uint8_t i = 3, vx = v[(opcode & 0x0F00) >> 8]; i > 0; --i, vx /= 10) {
-				memory[I + i - 1] = vx % 10;
+			for (uint8_t i = 3, vx = vm_state->v[(opcode & 0x0F00) >> 8]; i > 0; --i, vx /= 10) {
+				vm_state->memory[vm_state->I + i - 1] = vx % 10;
 			}
 			break;
 		}
@@ -482,9 +488,9 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
 			uint8_t registers = ((opcode & 0x0F00) >> 8) + 1;
 			for (uint8_t i = 0; i < registers; ++i) {
-				memory[I + i] = v[i];
+				vm_state->memory[vm_state->I + i] = vm_state->v[i];
 			}
-			I += registers;
+			vm_state->I += registers;
 			break;
 		}
 		case 0x0065:	// 0xFX65: Load memory
@@ -492,9 +498,9 @@ void execute_loop(enum DisplayOp* display_op, struct input_state* input_state)
 			// WARN: Ambiguous isntruction; implemented COSMAC VIP behaviour.
 			uint8_t registers = ((opcode & 0x0F00) >> 8) + 1;
 			for (uint8_t i = 0; i < registers; ++i) {
-				v[i] = memory[I + i];
+				vm_state->v[i] = vm_state->memory[vm_state->I + i];
 			}
-			I += registers;
+			vm_state->I += registers;
 			break;
 		}
 		default:
